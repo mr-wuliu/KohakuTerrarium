@@ -37,6 +37,12 @@ from kohakuterrarium.builtins.tools.tree import TreeTool
 from kohakuterrarium.builtins.tools.web_fetch import WebFetchTool
 from kohakuterrarium.builtins.tools.web_search import WebSearchTool
 from kohakuterrarium.builtins.tools.write import WriteTool
+from kohakuterrarium.mcp.tools import (
+    MCPCallTool,
+    MCPConnectTool,
+    MCPDisconnectTool,
+    MCPListTool,
+)
 
 __all__ = [
     # Registry
@@ -66,4 +72,9 @@ __all__ = [
     "TreeTool",
     "WebFetchTool",
     "WebSearchTool",
+    # MCP
+    "MCPListTool",
+    "MCPCallTool",
+    "MCPConnectTool",
+    "MCPDisconnectTool",
 ]

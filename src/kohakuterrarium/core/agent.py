@@ -194,6 +194,9 @@ class Agent(AgentInitMixin, AgentHandlersMixin):
         self._running = True
         self._shutdown_event.clear()
 
+        # Initialize MCP client manager if mcp_servers configured
+        await self._init_mcp()
+
         self._init_compact_manager()
         self._publish_session_info()
 
@@ -265,6 +268,43 @@ class Agent(AgentInitMixin, AgentHandlersMixin):
             )
 
         self.subagent_manager._on_tool_activity = _on_sa_tool_activity
+
+    async def _init_mcp(self) -> None:
+        """Initialize MCP client manager and connect configured servers."""
+        mcp_configs = self.config.mcp_servers
+        if not mcp_configs:
+            self._mcp_manager = None
+            return
+
+        try:
+            from kohakuterrarium.mcp.client import MCPClientManager, MCPServerConfig
+        except ImportError:
+            logger.warning("MCP configured but mcp package not installed")
+            self._mcp_manager = None
+            return
+
+        self._mcp_manager = MCPClientManager()
+
+        for srv_data in mcp_configs:
+            if not isinstance(srv_data, dict):
+                continue
+            try:
+                config = MCPServerConfig(
+                    name=srv_data.get("name", ""),
+                    transport=srv_data.get("transport", "stdio"),
+                    command=srv_data.get("command", ""),
+                    args=srv_data.get("args", []),
+                    env=srv_data.get("env", {}),
+                    url=srv_data.get("url", ""),
+                )
+                if config.name:
+                    await self._mcp_manager.connect(config)
+            except Exception as e:
+                logger.warning(
+                    "Failed to connect MCP server",
+                    server=srv_data.get("name", ""),
+                    error=str(e),
+                )
 
     def _init_compact_manager(self) -> None:
         """Initialize the auto-compact manager.
@@ -483,6 +523,10 @@ class Agent(AgentInitMixin, AgentHandlersMixin):
 
         self._running = False
         self._shutdown_event.set()
+
+        # Shutdown MCP connections
+        if hasattr(self, "_mcp_manager") and self._mcp_manager:
+            await self._mcp_manager.shutdown()
 
         await self.subagent_manager.cancel_all()
         await self.trigger_manager.stop_all()

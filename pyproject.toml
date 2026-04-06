@@ -73,6 +73,10 @@ asr = [
 pdf = [
     "pymupdf>=1.24.0",
 ]
+# MCP (Model Context Protocol) client support
+mcp = [
+    "mcp>=1.0.0",
+]
 # Web tools: fetch pages + search
 web = [
     "trafilatura>=2.0.0",
@@ -93,7 +97,7 @@ desktop = [
     "pywebview>=6.0",
 ]
 all = [
-    "KohakuTerrarium[api,dev,web,browser,pdf,embeddings,embeddings-light]",
+    "KohakuTerrarium[api,dev,web,browser,pdf,mcp,embeddings,embeddings-light]",
 ]
 
 [tool.setuptools]
