@@ -696,13 +696,12 @@ export const useChatStore = defineStore("chat", {
       statusStore.handleActivity(data);
 
       if (at === "session_info") {
-        this.sessionInfo = {
-          sessionId: data.session_id || "",
-          model: data.model || "",
-          agentName: data.agent_name || "",
-          maxContext: data.max_context || 0,
-          compactThreshold: data.compact_threshold || 0,
-        };
+        // Merge — update fields present in the event, keep existing for absent ones
+        if (data.session_id) this.sessionInfo.sessionId = data.session_id;
+        if (data.model) this.sessionInfo.model = data.model;
+        if (data.agent_name) this.sessionInfo.agentName = data.agent_name;
+        if (data.max_context != null) this.sessionInfo.maxContext = data.max_context;
+        if (data.compact_threshold != null) this.sessionInfo.compactThreshold = data.compact_threshold;
         return;
       }
 
