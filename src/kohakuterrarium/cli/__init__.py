@@ -1,0 +1,280 @@
+"""KohakuTerrarium CLI — command dispatch and argument parsing."""
+
+import argparse
+
+from kohakuterrarium.packages import resolve_package_path
+from kohakuterrarium.serving.web import run_desktop_app, run_web_server
+from kohakuterrarium.terrarium.cli import (
+    add_terrarium_subparser,
+    handle_terrarium_command,
+)
+
+from kohakuterrarium.cli.auth import login_cli
+from kohakuterrarium.cli.memory import embedding_cli, search_cli
+from kohakuterrarium.cli.model import model_cli
+from kohakuterrarium.cli.packages import (
+    edit_cli,
+    install_cli,
+    list_cli,
+    show_agent_info_cli,
+    uninstall_cli,
+)
+from kohakuterrarium.cli.resume import resume_cli
+from kohakuterrarium.cli.run import run_agent_cli
+
+
+def main() -> int:
+    """Main CLI entry point."""
+    parser = argparse.ArgumentParser(
+        prog="kt",
+        description="KohakuTerrarium - Universal Agent Framework",
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Commands")
+
+    # Run command
+    run_parser = subparsers.add_parser("run", help="Run an agent")
+    run_parser.add_argument(
+        "agent_path",
+        help="Path to agent config folder (e.g., agents/swe-agent)",
+    )
+    run_parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Logging level",
+    )
+    run_parser.add_argument(
+        "--session",
+        nargs="?",
+        const="__auto__",
+        default="__auto__",
+        help="Session file path (default: auto in ~/.kohakuterrarium/sessions/). Use --no-session to disable.",
+    )
+    run_parser.add_argument(
+        "--no-session",
+        action="store_true",
+        help="Disable session persistence",
+    )
+    run_parser.add_argument(
+        "--llm",
+        default=None,
+        help="Override LLM profile (e.g., gpt-5.4, gemini, claude-sonnet-4)",
+    )
+    run_parser.add_argument(
+        "--mode",
+        choices=["cli", "tui"],
+        default=None,
+        help="Input/output mode (overrides config input/output; omit to use config)",
+    )
+
+    # List command
+    list_parser = subparsers.add_parser("list", help="List available agents")
+    list_parser.add_argument(
+        "--path",
+        default="agents",
+        help="Path to agents directory",
+    )
+
+    # Info command
+    info_parser = subparsers.add_parser("info", help="Show agent info")
+    info_parser.add_argument(
+        "agent_path",
+        help="Path to agent config folder",
+    )
+
+    # Terrarium command group
+    add_terrarium_subparser(subparsers)
+
+    # Resume command
+    resume_parser = subparsers.add_parser(
+        "resume", help="Resume a session (by name, path, or list recent)"
+    )
+    resume_parser.add_argument(
+        "session",
+        nargs="?",
+        default=None,
+        help="Session name/prefix, full path, or omit to list recent sessions",
+    )
+    resume_parser.add_argument("--pwd", help="Override working directory")
+    resume_parser.add_argument(
+        "--last",
+        action="store_true",
+        help="Resume the most recent session",
+    )
+    resume_parser.add_argument(
+        "--mode",
+        choices=["cli", "tui"],
+        default="tui",
+        help="Input/output mode (default: tui)",
+    )
+    resume_parser.add_argument(
+        "--llm",
+        default=None,
+        help="Override LLM profile (e.g., gpt-5.4, gemini, claude-sonnet-4.6)",
+    )
+    resume_parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+    )
+
+    # Login command
+    login_parser = subparsers.add_parser("login", help="Authenticate with a provider")
+    login_parser.add_argument(
+        "provider",
+        choices=["codex", "openrouter", "openai", "anthropic", "gemini", "mimo"],
+        help="Provider to authenticate with",
+    )
+
+    # Install command
+    install_parser = subparsers.add_parser(
+        "install", help="Install a creature/terrarium package"
+    )
+    install_parser.add_argument("source", help="Git URL or local path to package")
+    install_parser.add_argument(
+        "-e",
+        "--editable",
+        action="store_true",
+        help="Install as editable (symlink, like pip -e)",
+    )
+    install_parser.add_argument("--name", default=None, help="Override package name")
+
+    # Uninstall command
+    uninstall_parser = subparsers.add_parser(
+        "uninstall", help="Remove an installed package"
+    )
+    uninstall_parser.add_argument("name", help="Package name to remove")
+
+    # Edit command
+    edit_parser = subparsers.add_parser(
+        "edit", help="Open a creature/terrarium config in editor"
+    )
+    edit_parser.add_argument(
+        "target",
+        help="@package/creatures/name or @package/terrariums/name",
+    )
+
+    # Embedding command
+    embed_parser = subparsers.add_parser(
+        "embedding", help="Build embeddings for a session (offline indexing)"
+    )
+    embed_parser.add_argument("session", help="Session name/prefix or path")
+    embed_parser.add_argument(
+        "--provider",
+        choices=["auto", "model2vec", "sentence-transformer", "api"],
+        default="auto",
+        help="Embedding provider (default: auto, prefers jina v5 nano)",
+    )
+    embed_parser.add_argument(
+        "--model", default=None, help="Model name (default: provider-dependent)"
+    )
+    embed_parser.add_argument(
+        "--dimensions", type=int, default=None, help="Embedding dimensions (Matryoshka)"
+    )
+
+    # Search command
+    search_parser = subparsers.add_parser("search", help="Search a session's memory")
+    search_parser.add_argument("session", help="Session name/prefix or path")
+    search_parser.add_argument("query", help="Search query")
+    search_parser.add_argument(
+        "--mode",
+        choices=["fts", "semantic", "hybrid", "auto"],
+        default="auto",
+        help="Search mode (default: auto)",
+    )
+    search_parser.add_argument("--agent", default=None, help="Filter by agent name")
+    search_parser.add_argument(
+        "-k", type=int, default=10, help="Max results (default: 10)"
+    )
+
+    # Web server command
+    web_parser = subparsers.add_parser(
+        "web", help="Serve web UI + API (single process)"
+    )
+    web_parser.add_argument("--host", default="0.0.0.0", help="Bind host")
+    web_parser.add_argument("--port", type=int, default=8001, help="Bind port")
+    web_parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="API-only mode (run vite dev server separately)",
+    )
+
+    # Desktop app command
+    app_parser = subparsers.add_parser(
+        "app", help="Launch native desktop UI (requires pywebview)"
+    )
+    app_parser.add_argument(
+        "--port", type=int, default=8001, help="Internal server port"
+    )
+
+    # Model command
+    model_parser = subparsers.add_parser("model", help="Manage LLM profiles")
+    model_sub = model_parser.add_subparsers(dest="model_command")
+    model_sub.add_parser("list", help="List all profiles and presets")
+    model_default_parser = model_sub.add_parser("default", help="Set default model")
+    model_default_parser.add_argument("name", help="Model/profile name")
+    model_show_parser = model_sub.add_parser("show", help="Show profile details")
+    model_show_parser.add_argument("name", help="Model/profile name")
+
+    args = parser.parse_args()
+
+    # No command given: launch desktop app (used by Briefcase and double-click)
+    if not args.command:
+        run_desktop_app()
+        return 0
+
+    if args.command == "run":
+        # Resolve @package references in agent_path
+        agent_path = args.agent_path
+        if agent_path.startswith("@"):
+            agent_path = str(resolve_package_path(agent_path))
+        session = None if args.no_session else args.session
+        return run_agent_cli(
+            agent_path,
+            args.log_level,
+            session=session,
+            io_mode=args.mode,
+            llm_override=args.llm,
+        )
+    elif args.command == "resume":
+        return resume_cli(
+            args.session,
+            args.pwd,
+            args.log_level,
+            last=args.last,
+            io_mode=args.mode,
+            llm_override=args.llm,
+        )
+    elif args.command == "list":
+        return list_cli(args.path)
+    elif args.command == "info":
+        return show_agent_info_cli(args.agent_path)
+    elif args.command == "terrarium":
+        # Resolve @package references in terrarium path
+        if hasattr(args, "terrarium_path") and args.terrarium_path:
+            if args.terrarium_path.startswith("@"):
+                args.terrarium_path = str(resolve_package_path(args.terrarium_path))
+        return handle_terrarium_command(args)
+    elif args.command == "login":
+        return login_cli(args.provider)
+    elif args.command == "install":
+        return install_cli(args.source, args.editable, args.name)
+    elif args.command == "uninstall":
+        return uninstall_cli(args.name)
+    elif args.command == "edit":
+        return edit_cli(args.target)
+    elif args.command == "embedding":
+        return embedding_cli(args.session, args.provider, args.model, args.dimensions)
+    elif args.command == "search":
+        return search_cli(args.session, args.query, args.mode, args.agent, args.k)
+    elif args.command == "web":
+        run_web_server(host=args.host, port=args.port, dev=args.dev)
+        return 0
+    elif args.command == "app":
+        run_desktop_app(port=args.port)
+        return 0
+    elif args.command == "model":
+        return model_cli(args)
+    else:
+        parser.print_help()
+        return 0

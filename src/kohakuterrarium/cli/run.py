@@ -1,0 +1,193 @@
+"""CLI run command — launch an agent from a config folder."""
+
+import asyncio
+from pathlib import Path
+
+from kohakuterrarium.core.agent import Agent
+from kohakuterrarium.session.store import SessionStore
+from kohakuterrarium.utils.logging import set_level
+
+_SESSION_DIR = Path.home() / ".kohakuterrarium" / "sessions"
+
+
+def run_agent_cli(
+    agent_path: str,
+    log_level: str,
+    session: str | None = None,
+    io_mode: str | None = None,
+    llm_override: str | None = None,
+) -> int:
+    """Run an agent from CLI."""
+
+    # Setup logging
+    set_level(log_level)
+
+    # Check path exists
+    path = Path(agent_path)
+    if not path.exists():
+        print(f"Error: Agent path not found: {agent_path}")
+        return 1
+
+    config_file = path / "config.yaml"
+    if not config_file.exists():
+        config_file = path / "config.yml"
+        if not config_file.exists():
+            print(f"Error: No config.yaml found in {agent_path}")
+            return 1
+
+    store = None
+    session_file = None
+    try:
+        # Create IO module overrides if mode specified
+        io_kwargs: dict = {}
+        if io_mode:
+            from kohakuterrarium.session.resume import _create_io_modules
+
+            inp, out = _create_io_modules(io_mode)
+            io_kwargs["input_module"] = inp
+            io_kwargs["output_module"] = out
+
+        # Create agent
+        agent = Agent.from_path(str(path), llm_override=llm_override, **io_kwargs)
+
+        # Attach session store (default: ON)
+        if session is not None:
+            if session == "__auto__":
+                _SESSION_DIR.mkdir(parents=True, exist_ok=True)
+                session_file = (
+                    _SESSION_DIR / f"{agent.config.name}_{id(agent):08x}.kohakutr"
+                )
+            else:
+                session_file = Path(session)
+
+            store = SessionStore(session_file)
+            store.init_meta(
+                session_id=f"cli_{id(agent):08x}",
+                config_type="agent",
+                config_path=str(path),
+                pwd=str(Path.cwd()),
+                agents=[agent.config.name],
+            )
+            agent.attach_session_store(store)
+
+        asyncio.run(agent.run())
+        return 0
+    except KeyboardInterrupt:
+        print("\nInterrupted")
+        return 0
+    except Exception as e:
+        print(f"Error: {e}")
+        return 1
+    finally:
+        if store:
+            store.close()
+        if session_file and session_file.exists():
+            print(f"\nSession saved. To resume:")
+            print(f"  kt resume {session_file.stem}")
+
+
+def _resolve_session(query: str | None, last: bool = False) -> Path | None:
+    """Resolve a session query to a file path.
+
+    Searches ~/.kohakuterrarium/sessions/ for matching files.
+    Accepts: full path, filename, name prefix, or None (list/pick).
+    """
+    # Full path provided
+    if query and Path(query).exists():
+        return Path(query)
+
+    # Strip extension from query if present (user may paste from hint)
+    if query:
+        for ext in (".kohakutr", ".kt"):
+            if query.endswith(ext):
+                query = query[: -len(ext)]
+                break
+
+    # Search in default session directory
+    if not _SESSION_DIR.exists():
+        return None
+
+    sessions = sorted(
+        _SESSION_DIR.glob("*.kohakutr"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    # Also check legacy .kt files (pre-.kohakutr extension)
+    sessions.extend(
+        sorted(
+            _SESSION_DIR.glob("*.kt"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    )
+
+    if not sessions:
+        return None
+
+    # --last: most recent
+    if last:
+        return sessions[0]
+
+    # No query: list recent and let user pick
+    if not query:
+        print("Recent sessions:")
+        shown = sessions[:10]
+        for i, s in enumerate(shown, 1):
+            meta = _session_preview(s)
+            print(f"  {i}. {s.name}  {meta}")
+        print()
+        try:
+            choice = input(f"Pick [1-{len(shown)}] or name prefix: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(shown):
+                return shown[idx]
+            return None
+        query = choice
+
+    # Prefix match
+    matches = [s for s in sessions if s.stem.startswith(query) or query in s.stem]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        print(f"Multiple matches for '{query}':")
+        for i, s in enumerate(matches[:10], 1):
+            meta = _session_preview(s)
+            print(f"  {i}. {s.name}  {meta}")
+        print()
+        try:
+            choice = input(f"Pick [1-{len(matches[:10])}]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(matches[:10]):
+                return matches[idx]
+        return None
+
+    # No match in session dir, try as path
+    p = Path(query)
+    if p.exists():
+        return p
+    # Try appending extension
+    for ext in (".kohakutr", ".kt"):
+        if (_SESSION_DIR / f"{query}{ext}").exists():
+            return _SESSION_DIR / f"{query}{ext}"
+
+    return None
+
+
+def _session_preview(path: Path) -> str:
+    """Get a short preview of session metadata."""
+    try:
+        store = SessionStore(path)
+        meta = store.load_meta()
+        store.close()
+        config_type = meta.get("config_type", "?")
+        config_path = meta.get("config_path", "")
+        name = Path(config_path).name if config_path else "?"
+        return f"({config_type}: {name})"
+    except Exception:
+        return ""

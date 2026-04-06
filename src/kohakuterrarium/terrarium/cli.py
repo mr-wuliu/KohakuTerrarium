@@ -3,7 +3,6 @@
 import argparse
 import asyncio
 import sys
-from datetime import datetime
 from pathlib import Path
 
 from kohakuterrarium.builtins.tui.output import TUIOutput
@@ -12,12 +11,16 @@ from kohakuterrarium.builtins.user_commands import (
     get_builtin_user_command,
     list_builtin_user_commands,
 )
-from kohakuterrarium.modules.output.base import BaseOutputModule
 from kohakuterrarium.modules.user_command.base import (
     UserCommandContext,
     parse_slash_command,
 )
 from kohakuterrarium.session.store import SessionStore
+from kohakuterrarium.terrarium.cli_output import (
+    CLIOutput,
+    _format_ts,
+    _print_channel_message,
+)
 from kohakuterrarium.terrarium.config import load_terrarium_config
 from kohakuterrarium.terrarium.observer import ChannelObserver
 from kohakuterrarium.terrarium.runtime import TerrariumRuntime
@@ -31,87 +34,35 @@ from kohakuterrarium.utils.logging import (
 logger = get_logger(__name__)
 
 
-class CLIOutput(BaseOutputModule):
-    """Minimal stdout-backed terrarium output for headless CLI mode."""
+async def _render_command_data(tui: "TUISession", data: dict) -> str | None:
+    """Render interactive command data (modals) and return the user's choice."""
+    data_type = data.get("type", "")
 
-    def __init__(self, speaker: str):
-        super().__init__()
-        self.speaker = speaker
-        self._has_output = False
-        self._streaming = False
+    if data_type == "select":
+        options = data.get("options", [])
+        if not options:
+            return None
+        selected = await tui.show_selection_modal(
+            title=data.get("title", "Select"),
+            options=options,
+            current=data.get("current", ""),
+        )
+        if selected:
+            action = data.get("action", "")
+            if action:
+                return selected
+        return None
 
-    @property
-    def _prefix(self) -> str:
-        return f"[{self.speaker}] "
+    if data_type == "confirm":
+        confirmed = await tui.show_confirm_modal(data.get("message", "Confirm?"))
+        if confirmed:
+            action = data.get("action", "")
+            args = data.get("action_args", "")
+            if action:
+                return args
+        return None
 
-    async def write(self, content: str) -> None:
-        if not content:
-            return
-
-        output = ""
-        if not self._has_output:
-            output += self._prefix
-
-        output += content
-        if not output.endswith("\n"):
-            output += "\n"
-
-        sys.stdout.write(output)
-        sys.stdout.flush()
-        self._has_output = True
-        self._streaming = False
-
-    async def write_stream(self, chunk: str) -> None:
-        if not chunk:
-            return
-
-        if not self._streaming and not self._has_output:
-            sys.stdout.write(self._prefix)
-
-        sys.stdout.write(chunk)
-        sys.stdout.flush()
-        self._streaming = True
-        self._has_output = True
-
-    async def flush(self) -> None:
-        if self._streaming:
-            sys.stdout.write("\n")
-        sys.stdout.flush()
-        self._streaming = False
-
-    async def on_processing_start(self) -> None:
-        self.reset()
-
-    async def on_processing_end(self) -> None:
-        await self.flush()
-        self.reset()
-
-    async def on_resume(self, events: list[dict]) -> None:
-        turns = _group_resume_events(events)
-        if not turns:
-            return
-
-        print(f"\n--- Resumed {self.speaker} session ({len(turns)} turns) ---")
-        for turn in turns:
-            if turn["user"]:
-                user_preview = turn["user"][:120]
-                if len(turn["user"]) > 120:
-                    user_preview += "..."
-                print(f"[{self.speaker}] You: {user_preview}")
-
-            if turn["text"]:
-                text_preview = turn["text"].strip()[:200]
-                if len(turn["text"].strip()) > 200:
-                    text_preview += "..."
-                tools_str = ""
-                if turn["tools"]:
-                    tools_str = f" [used {', '.join(turn['tools'])}]"
-                print(f"[{self.speaker}]{tools_str} {text_preview}")
-        print(f"--- End of {self.speaker} history ---\n")
-
-    def reset(self) -> None:
-        self._has_output = False
-        self._streaming = False
+    return None
 
 
 async def run_terrarium_with_tui(runtime: TerrariumRuntime) -> None:
@@ -167,13 +118,34 @@ async def run_terrarium_with_tui(runtime: TerrariumRuntime) -> None:
         creature_out._default_target = name
         handle.agent.output_router.default_output = creature_out
 
-    # Wire Escape interrupt
+    # Wire Escape interrupt and click-to-cancel
     if tui._app:
         tui._app.on_interrupt = root.interrupt
+    tui.on_cancel_job = root._cancel_job
 
     # Start TUI app
     _app_task = asyncio.create_task(tui.run_app())  # noqa: F841
     await tui.wait_ready()
+
+    # Emit session info for the root agent
+    model = getattr(root.llm, "model", "") or getattr(
+        getattr(root.llm, "config", None), "model", ""
+    )
+    session_id = ""
+    if runtime.session_store:
+        try:
+            meta = runtime.session_store.load_meta()
+            session_id = meta.get("session_id", "")
+        except Exception:
+            pass
+    tui.update_session_info(
+        session_id=session_id, model=model, agent_name=terrarium_name
+    )
+    compact_mgr = getattr(root, "compact_manager", None)
+    if compact_mgr:
+        max_ctx = compact_mgr.config.max_tokens
+        compact_at = int(max_ctx * compact_mgr.config.threshold) if max_ctx else 0
+        tui.set_context_limits(max_ctx, compact_at)
 
     # Update terrarium panel
     creature_info = []
@@ -248,6 +220,16 @@ async def run_terrarium_with_tui(runtime: TerrariumRuntime) -> None:
     _cmd_context = UserCommandContext(agent=root, session=root.session)
     _cmd_context.extra["command_registry"] = _commands
 
+    # Set command hints on the ChatInput widget
+    if tui._app:
+        try:
+            from kohakuterrarium.builtins.tui.widgets import ChatInput
+
+            inp = tui._app.query_one("#input-box", ChatInput)
+            inp.command_names = list(_commands.keys())
+        except Exception:
+            pass
+
     # Main loop: TUI input -> root agent via inject_input
     try:
         while True:
@@ -268,6 +250,24 @@ async def run_terrarium_with_tui(runtime: TerrariumRuntime) -> None:
                         tui.add_system_notice(
                             result.error, command=cmd_name, error=True
                         )
+                    # Handle interactive data (modals)
+                    if result.data and not result.consumed:
+                        chosen = await _render_command_data(tui, result.data)
+                        if chosen is not None:
+                            action = result.data.get("action", "")
+                            follow_cmd = _commands.get(_cmd_aliases.get(action, action))
+                            if follow_cmd:
+                                result2 = await follow_cmd.execute(chosen, _cmd_context)
+                                if result2.output:
+                                    tui.add_system_notice(
+                                        result2.output, command=cmd_name
+                                    )
+                                if result2.error:
+                                    tui.add_system_notice(
+                                        result2.error,
+                                        command=cmd_name,
+                                        error=True,
+                                    )
                     # Check if exit was requested (e.g. /exit command)
                     if canonical == "exit":
                         break
@@ -660,60 +660,6 @@ async def _read_cli_input(prompt: str = "You: ") -> str | None:
     if line == "":
         return None
     return line.rstrip("\r\n")
-
-
-def _group_resume_events(events: list[dict]) -> list[dict]:
-    """Group persisted events into condensed turns for CLI replay."""
-    if not events:
-        return []
-
-    turns: list[dict] = []
-    current: dict = {"user": "", "text": "", "tools": []}
-
-    for evt in events:
-        etype = evt.get("type", "")
-        if etype == "user_input":
-            if current["user"] or current["text"]:
-                turns.append(current)
-            current = {"user": evt.get("content", ""), "text": "", "tools": []}
-        elif etype == "trigger_fired":
-            if current["user"] or current["text"]:
-                turns.append(current)
-            channel = evt.get("channel", "")
-            sender = evt.get("sender", "")
-            current = {
-                "user": f"[trigger: {channel} from {sender}]",
-                "text": "",
-                "tools": [],
-            }
-        elif etype == "text":
-            current["text"] += evt.get("content", "")
-        elif etype == "tool_call":
-            name = evt.get("name", "tool")
-            if name not in current["tools"]:
-                current["tools"].append(name)
-
-    if current["user"] or current["text"]:
-        turns.append(current)
-
-    return turns
-
-
-def _format_ts(ts: float | None) -> str:
-    """Format a persisted epoch timestamp for channel replay."""
-    if ts is None:
-        return "--:--:--"
-
-    try:
-        return datetime.fromtimestamp(ts).strftime("%H:%M:%S")
-    except (TypeError, ValueError, OSError):
-        return "--:--:--"
-
-
-def _print_channel_message(channel: str, sender: str, content: str, ts: str) -> None:
-    """Print channel traffic in a stable CLI-friendly format."""
-    content_preview = str(content)[:100].replace("\n", "\\n")
-    print(f"  [{ts}] [{channel}] {sender}: {content_preview}")
 
 
 def _info_terrarium_cli(args: argparse.Namespace) -> int:

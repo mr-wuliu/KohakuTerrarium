@@ -6,104 +6,29 @@ and configurable output routing.
 """
 
 import asyncio
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from kohakuterrarium.core.constants import TOOL_OUTPUT_PREVIEW_CHARS
 from kohakuterrarium.core.conversation import Conversation
 from kohakuterrarium.core.executor import Executor
-from kohakuterrarium.core.job import JobResult, JobState, JobStatus, JobType
 from kohakuterrarium.core.registry import Registry
 from kohakuterrarium.llm.base import LLMProvider
 from kohakuterrarium.llm.tools import build_tool_schemas
 from kohakuterrarium.modules.subagent.config import SubAgentConfig
+from kohakuterrarium.modules.subagent.result import (
+    SubAgentJob,  # noqa: F401 – re-exported for backward compat
+    SubAgentResult,
+    build_subagent_framework_hints,
+)
 from kohakuterrarium.parsing import ParserConfig, StreamParser, TextEvent, ToolCallEvent
 from kohakuterrarium.parsing.format import (
     BRACKET_FORMAT,
     XML_FORMAT,
     ToolCallFormat,
-    format_tool_call_example,
 )
 from kohakuterrarium.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-
-_SUBAGENT_CRITICAL_RULES = """
-## CRITICAL: You MUST use tools to complete your task
-
-- After calling a tool, STOP and wait for results
-- Do NOT just describe what you would do - actually DO it
-- Continue calling tools until task is complete
-""".strip()
-
-
-def build_subagent_framework_hints(
-    tool_format: str | None,
-    parser_format: ToolCallFormat | None = None,
-) -> str:
-    """Build format-aware framework hints for sub-agents.
-
-    Native mode: no format examples (API handles it).
-    Custom mode: generate examples from the actual ToolCallFormat.
-    """
-    if tool_format == "native":
-        return (
-            "## Tool Calling\n\n"
-            "Tools are called via the API's native function calling mechanism.\n"
-            "You do not need to format tool calls manually.\n\n"
-            + _SUBAGENT_CRITICAL_RULES
-        )
-
-    if parser_format is None:
-        parser_format = BRACKET_FORMAT
-
-    lines = ["## Tool Calling Format", ""]
-    generic = format_tool_call_example(
-        parser_format, "tool_name", {"arg": "value"}, "content here"
-    )
-    lines.append(f"```\n{generic}\n```")
-    lines.append("")
-    lines.append("Examples:")
-    lines.append("")
-
-    for name, args in [
-        ("glob", {"pattern": "**/*.py"}),
-        ("grep", {"pattern": "class.*Config"}),
-        ("read", {"path": "src/main.py"}),
-    ]:
-        ex = format_tool_call_example(parser_format, name, args)
-        lines.append(f"```\n{ex}\n```")
-        lines.append("")
-
-    lines.append(_SUBAGENT_CRITICAL_RULES)
-    return "\n".join(lines)
-
-
-# Backward-compatible alias (bracket format)
-SUBAGENT_FRAMEWORK_HINTS = build_subagent_framework_hints("bracket", BRACKET_FORMAT)
-
-
-@dataclass
-class SubAgentResult:
-    """Result from sub-agent execution."""
-
-    output: str = ""
-    success: bool = True
-    error: str | None = None
-    turns: int = 0
-    duration: float = 0.0
-    total_tokens: int = 0  # Total tokens used across all turns
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def truncated(self, max_chars: int = 2000) -> str:
-        """Get truncated output with note if truncated."""
-        if len(self.output) <= max_chars:
-            return self.output
-        return f"{self.output[:max_chars]}\n... ({len(self.output) - max_chars} more chars)"
 
 
 class SubAgent:
@@ -169,6 +94,7 @@ class SubAgent:
 
         # State
         self._running = False
+        self._cancelled = False
         self._start_time: datetime | None = None
         self._turns = 0
 
@@ -303,6 +229,18 @@ class SubAgent:
         tools_used: list[str] = []
 
         while self.config.max_turns == 0 or self._turns < self.config.max_turns:
+            if self._cancelled:
+                return SubAgentResult(
+                    success=False,
+                    error="User manually interrupted this job.",
+                    turns=self._turns,
+                    duration=self._calculate_duration(),
+                    total_tokens=self._total_tokens,
+                    prompt_tokens=self._prompt_tokens,
+                    completion_tokens=self._completion_tokens,
+                    metadata={"tools_used": tools_used},
+                )
+
             self._turns += 1
             logger.debug(
                 "Sub-agent turn started",
@@ -312,6 +250,18 @@ class SubAgent:
 
             tool_calls, turn_output = await self._run_single_turn(native_tool_schemas)
             output_parts.extend(turn_output)
+
+            if self._cancelled:
+                return SubAgentResult(
+                    success=False,
+                    error="User manually interrupted this job.",
+                    turns=self._turns,
+                    duration=self._calculate_duration(),
+                    total_tokens=self._total_tokens,
+                    prompt_tokens=self._prompt_tokens,
+                    completion_tokens=self._completion_tokens,
+                    metadata={"tools_used": tools_used},
+                )
 
             if not tool_calls:
                 logger.info(
@@ -633,63 +583,13 @@ class SubAgent:
             return (datetime.now() - self._start_time).total_seconds()
         return 0.0
 
+    def cancel(self) -> None:
+        """Request cancellation. The run loop will exit at the next check point."""
+        self._cancelled = True
+        self._running = False
+        logger.info("Sub-agent cancel requested", subagent_name=self.config.name)
+
     @property
     def is_running(self) -> bool:
         """Check if sub-agent is currently running."""
         return self._running
-
-
-class SubAgentJob:
-    """Wrapper for running a sub-agent as a background job.
-
-    Integrates with the executor's job tracking system.
-    """
-
-    def __init__(self, subagent: SubAgent, job_id: str):
-        self.subagent = subagent
-        self.job_id = job_id
-        self._task: asyncio.Task | None = None
-        self._result: SubAgentResult | None = None
-
-    async def run(self, task: str) -> SubAgentResult:
-        """Run the sub-agent and return result."""
-        self._result = await self.subagent.run(task)
-        return self._result
-
-    def to_job_status(self) -> JobStatus:
-        """Create job status for this sub-agent run."""
-        if self._result and not self._result.success:
-            state = JobState.ERROR
-        elif self.subagent.is_running:
-            state = JobState.RUNNING
-        else:
-            state = JobState.DONE
-
-        return JobStatus(
-            job_id=self.job_id,
-            job_type=JobType.SUBAGENT,
-            type_name=self.subagent.config.name,
-            state=state,
-            output_lines=self._result.output.count("\n") + 1 if self._result else 0,
-            output_bytes=len(self._result.output) if self._result else 0,
-            preview=(
-                self._result.output[:TOOL_OUTPUT_PREVIEW_CHARS] if self._result else ""
-            ),
-            error=self._result.error if self._result else None,
-        )
-
-    def to_job_result(self) -> JobResult | None:
-        """Convert to JobResult for compatibility."""
-        if not self._result:
-            return None
-
-        return JobResult(
-            job_id=self.job_id,
-            output=self._result.output,
-            exit_code=0 if self._result.success else 1,
-            error=self._result.error,
-            metadata={
-                "turns": self._result.turns,
-                "duration": self._result.duration,
-            },
-        )

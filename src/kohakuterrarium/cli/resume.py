@@ -1,0 +1,60 @@
+"""CLI resume command — resume an agent or terrarium from a session file."""
+
+import asyncio
+
+from kohakuterrarium.session.resume import (
+    detect_session_type,
+    resume_agent,
+    resume_terrarium,
+)
+from kohakuterrarium.terrarium.cli import run_terrarium_with_tui
+from kohakuterrarium.utils.logging import set_level
+
+from kohakuterrarium.cli.run import _resolve_session
+
+
+def resume_cli(
+    query: str | None,
+    pwd_override: str | None,
+    log_level: str,
+    last: bool = False,
+    io_mode: str | None = None,
+    llm_override: str | None = None,
+) -> int:
+    """Resume an agent or terrarium from a session file."""
+    set_level(log_level)
+
+    path = _resolve_session(query, last=last)
+    if path is None:
+        if query:
+            print(f"No session found matching: {query}")
+        else:
+            print("No sessions found in ~/.kohakuterrarium/sessions/")
+        return 1
+
+    session_type = detect_session_type(path)
+    store = None
+
+    try:
+        if session_type == "terrarium":
+            # Don't pass io_mode - terrarium CLI controls all I/O
+            runtime, store = resume_terrarium(path, pwd_override)
+            asyncio.run(run_terrarium_with_tui(runtime))
+        else:
+            agent, store = resume_agent(
+                path, pwd_override, io_mode=io_mode, llm_override=llm_override
+            )
+            asyncio.run(agent.run())
+        return 0
+    except KeyboardInterrupt:
+        print("\nInterrupted")
+        return 0
+    except Exception as e:
+        print(f"Error: {e}")
+        return 1
+    finally:
+        if store:
+            store.close()
+        if path.exists():
+            print(f"\nSession saved. To resume:")
+            print(f"  kt resume {path.stem}")
