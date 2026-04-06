@@ -152,14 +152,15 @@ Stackable events can be batched when occurring simultaneously.
 src/kohakuterrarium/
 ├── core/                    # Core abstractions and runtime
 │   ├── agent.py             # Agent class - orchestrates everything
-│   ├── agent_init.py        # Component initialization (AgentInitMixin)
-│   ├── agent_handlers.py    # Event handling, tool execution (AgentHandlersMixin)
+│   ├── agent_handlers.py    # Event handling, controller loop (AgentHandlersMixin)
+│   ├── agent_tools.py       # Tool/subagent dispatch + bg completion (AgentToolsMixin)
 │   ├── controller.py        # Controller - LLM conversation loop + event queue
 │   ├── conversation.py      # Context management
 │   ├── executor.py          # Background job runner
 │   ├── job.py               # Job status tracking
 │   ├── events.py            # TriggerEvent + related event types
-│   ├── config.py            # Config loading with env interpolation
+│   ├── config.py            # Config loading, parsing, merging
+│   ├── config_types.py      # Config dataclasses (AgentConfig, InputConfig, etc.)
 │   ├── registry.py          # Module registration
 │   ├── channel.py           # Channel primitives (SubAgentChannel, AgentChannel)
 │   ├── compact.py           # Non-blocking context compaction
@@ -172,11 +173,21 @@ src/kohakuterrarium/
 │   └── trigger_manager.py   # Runtime trigger management
 │
 ├── bootstrap/               # Agent initialization factories
+│   ├── agent_init.py       # Component initialization (AgentInitMixin)
 │   ├── llm.py              # LLM provider creation
 │   ├── tools.py            # Tool loading and registration
 │   ├── io.py               # Input/output module creation
 │   ├── subagents.py        # Sub-agent config loading
 │   └── triggers.py         # Trigger module creation
+│
+├── cli/                     # CLI command handlers (kt entry point)
+│   ├── __init__.py         # main() with argparse + dispatch
+│   ├── run.py              # kt run — agent execution
+│   ├── resume.py           # kt resume — session resumption
+│   ├── packages.py         # kt list/info/install/uninstall/edit
+│   ├── auth.py             # kt login — provider authentication
+│   ├── memory.py           # kt embedding/search — session memory
+│   └── model.py            # kt model — profile management
 │
 ├── builtins/                # Built-in implementations
 │   ├── tool_catalog.py     # Global builtin tool lookup (leaf module, deferred loaders)
@@ -184,8 +195,13 @@ src/kohakuterrarium/
 │   ├── tools/              # 21 general + 9 terrarium tool classes
 │   ├── inputs/             # cli, asr, whisper, none
 │   ├── outputs/            # stdout, tts
-│   ├── subagents/          # Sub-agent configs (10 built-in)
-│   ├── tui/                # Terminal UI (input, output, session, widgets)
+│   ├── subagents/          # Sub-agent configs (12 built-in)
+│   ├── tui/                # Terminal UI
+│   │   ├── app.py          # AgentTUI Textual app
+│   │   ├── input.py        # TUIInput module
+│   │   ├── output.py       # TUIOutput module
+│   │   ├── session.py      # TUISession shared state
+│   │   └── widgets/        # Widget subpackage (blocks, messages, panels, input, modals)
 │   └── user_commands/      # Slash commands (clear, compact, exit, help, model, status)
 │
 ├── builtin_skills/          # Markdown skill manifests for on-demand tool/subagent docs
@@ -196,6 +212,12 @@ src/kohakuterrarium/
 │   ├── tool/                # On complete → TriggerEvent(type="tool_complete")
 │   ├── output/              # State machine router + output modules
 │   ├── subagent/            # Sub-agent lifecycle management
+│   │   ├── base.py         # SubAgent class (conversation loop)
+│   │   ├── result.py       # SubAgentResult, SubAgentJob, framework hints
+│   │   ├── manager.py      # SubAgentManager (spawn, cancel, cleanup)
+│   │   ├── interactive.py  # InteractiveSubAgent (long-running)
+│   │   ├── interactive_mgr.py # InteractiveManagerMixin
+│   │   └── config.py       # SubAgentConfig dataclass
 │   └── user_command/        # User slash command protocol
 │
 ├── session/                 # Session persistence (KohakuVault-backed)
@@ -209,14 +231,15 @@ src/kohakuterrarium/
 │   ├── manager.py           # KohakuManager - agent/terrarium lifecycle
 │   ├── agent_session.py     # AgentSession - streaming chat wrapper
 │   ├── events.py            # Event streaming helpers
-│   └── web.py               # Static web frontend serving
+│   └── web.py               # Static web frontend serving + pywebview desktop app
 │
 ├── terrarium/               # Multi-agent runtime
 │   ├── runtime.py           # TerrariumRuntime - lifecycle orchestration
 │   ├── factory.py           # Creature/root agent construction
 │   ├── config.py            # Terrarium config loading + topology prompt
 │   ├── api.py               # TerrariumAPI - programmatic terrarium control
-│   ├── cli.py               # CLI terrarium runner
+│   ├── cli.py               # CLI terrarium runner (TUI + headless)
+│   ├── cli_output.py        # CLIOutput for headless mode
 │   ├── creature.py          # CreatureHandle wrapper
 │   ├── hotplug.py           # Add/remove creatures and channels at runtime
 │   ├── observer.py          # ChannelObserver for non-destructive monitoring
@@ -242,7 +265,16 @@ src/kohakuterrarium/
 │
 ├── parsing/                 # Stream parsing (state machine)
 ├── commands/                # Framework commands (##info##, ##read##)
-├── llm/                     # LLM abstraction (OpenAI, OpenRouter, Codex OAuth, profiles)
+├── llm/                     # LLM abstraction
+│   ├── base.py              # LLMProvider protocol
+│   ├── openai.py            # OpenAI-compatible provider
+│   ├── codex_provider.py    # Codex OAuth provider
+│   ├── codex_auth.py        # Codex OAuth flow
+│   ├── message.py           # Message types (ContentPart, etc.)
+│   ├── tools.py             # Tool schema builders
+│   ├── presets.py           # 50+ model presets (pure data)
+│   ├── api_keys.py          # API key storage/retrieval
+│   └── profiles.py          # Profile resolution + management
 ├── prompt/                  # Prompt assembly, aggregation, plugins, skill loading
 ├── packages.py              # Package manager for kt install / resolve
 └── utils/                   # Shared utilities (logging, async, file_guard)
