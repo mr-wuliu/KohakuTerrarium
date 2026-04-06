@@ -495,7 +495,10 @@ export const useChatStore = defineStore("chat", {
       if (!target || target.startsWith("ch:")) return;
 
       try {
-        // Interrupt the main agent processing
+        // Interrupt the main agent processing only.
+        // Background jobs (sub-agents, background tools) are NOT cancelled —
+        // they have their own lifecycle and must be stopped individually
+        // via stopTask() from the running jobs panel.
         if (this.processing) {
           if (this._instanceType === "terrarium") {
             await terrariumAPI.interruptCreature(this._instanceId, target);
@@ -504,31 +507,8 @@ export const useChatStore = defineStore("chat", {
           }
           this.processing = false;
         }
-        // Stop all running background jobs (sub-agents, background tools)
-        const jobIds = Object.keys(this.runningJobs);
-        for (const jobId of jobIds) {
-          try {
-            if (this._instanceType === "terrarium") {
-              await terrariumAPI.stopCreatureTask(this._instanceId, target, jobId);
-            } else {
-              await agentAPI.stopTask(this._instanceId, jobId);
-            }
-          } catch {
-            // Job may have already completed
-          }
-          delete this.runningJobs[jobId];
-        }
-        // Mark all running tool parts as interrupted
-        const msgs = this.messagesByTab[target];
-        if (msgs) {
-          for (const msg of msgs) {
-            for (const p of msg.parts || []) {
-              if (p.type === "tool" && p.status === "running") {
-                p.status = "interrupted";
-              }
-            }
-          }
-        }
+        // Do NOT mark running parts as interrupted or remove running jobs.
+        // The backend will send proper done/error events when jobs complete.
       } catch (err) {
         console.error("Interrupt failed:", err);
       }

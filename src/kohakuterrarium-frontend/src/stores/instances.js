@@ -119,6 +119,11 @@ function _mapTerrarium(data) {
     pwd: data.pwd || "",
     status: data.running ? "running" : "stopped",
     has_root: !!data.has_root,
+    model: data.root_model || "",
+    provider: "",
+    session_id: data.root_session_id || "",
+    max_context: data.root_max_context || 0,
+    compact_threshold: data.root_compact_threshold || 0,
     creatures: Object.entries(data.creatures || {}).map(([name, info]) => ({
       name,
       status: info.running ? "running" : "idle",

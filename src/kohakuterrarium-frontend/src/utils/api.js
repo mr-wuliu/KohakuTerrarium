@@ -116,6 +116,14 @@ export const terrariumAPI = {
     return data;
   },
 
+  async switchCreatureModel(id, name, model) {
+    const { data } = await api.post(
+      `/terrariums/${id}/creatures/${name}/model`,
+      { model },
+    );
+    return data;
+  },
+
   /** Execute a slash command on a terrarium creature */
   async executeCreatureCommand(id, name, command, args = "") {
     const { data } = await api.post(

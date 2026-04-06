@@ -6,7 +6,7 @@
         <!-- Creature list -->
         <div>
           <div class="section-label">Creatures</div>
-          <div class="flex flex-col gap-1">
+          <div class="flex flex-col gap-1 max-h-48 overflow-y-auto">
             <div
               v-for="c in instance.creatures"
               :key="c.name"
@@ -29,7 +29,7 @@
         <!-- Channel list -->
         <div>
           <div class="section-label">Channels</div>
-          <div class="flex flex-col gap-1">
+          <div class="flex flex-col gap-1 max-h-48 overflow-y-auto">
             <div
               v-for="ch in instance.channels"
               :key="ch.name"
@@ -175,7 +175,7 @@
           <div
             v-for="(job, jobId) in chat.runningJobs"
             :key="jobId"
-            class="flex items-center gap-2 px-2 py-1.5 rounded-md bg-amber/10"
+            class="flex items-center gap-2 px-2 py-1.5 rounded-md bg-amber/10 group"
           >
             <span class="w-1.5 h-1.5 rounded-full bg-amber kohaku-pulse shrink-0" />
             <span class="font-mono text-[11px] text-amber-shadow dark:text-amber-light truncate">
@@ -183,8 +183,15 @@
             </span>
             <span class="flex-1" />
             <span class="text-warm-400 font-mono text-[10px]">
-              {{ formatElapsed(job.startedAt) }}
+              {{ chat.getJobElapsed(job) }}
             </span>
+            <button
+              class="text-warm-400 hover:text-coral transition-colors opacity-0 group-hover:opacity-100"
+              title="Stop task"
+              @click="stopTask(jobId, job.name)"
+            >
+              <span class="i-carbon-close text-[10px]" />
+            </button>
           </div>
         </div>
       </div>
@@ -264,7 +271,7 @@ import StatusDot from "@/components/common/StatusDot.vue";
 import GemBadge from "@/components/common/GemBadge.vue";
 import { useChatStore } from "@/stores/chat";
 import { useStatusStore } from "@/stores/status";
-import { configAPI, agentAPI } from "@/utils/api";
+import { configAPI, agentAPI, terrariumAPI } from "@/utils/api";
 
 const props = defineProps({
   instance: { type: Object, default: null },
@@ -354,6 +361,22 @@ function formatElapsed(startedAt) {
   return elapsed + "s";
 }
 
+async function stopTask(jobId, jobName) {
+  try {
+    const tab = chat.activeTab;
+    if (chat._instanceType === "terrarium") {
+      await terrariumAPI.stopCreatureTask(chat._instanceId, tab || "root", jobId);
+    } else {
+      await agentAPI.stopTask(chat._instanceId, jobId);
+    }
+    // Mark as cancelling for visual feedback — backend event will remove it
+    const job = chat.runningJobs[jobId];
+    if (job) job.cancelling = true;
+  } catch (err) {
+    console.error("Failed to stop task:", err);
+  }
+}
+
 async function loadModels() {
   modelsLoading.value = true;
   try {
@@ -370,7 +393,13 @@ async function handleModelSwitch(modelId) {
   if (!props.instance?.id) return;
   modelSwitchError.value = "";
   try {
-    await agentAPI.switchModel(props.instance.id, modelId);
+    if (props.instance.type === "terrarium") {
+      const target = chat.activeTab || "root";
+      await terrariumAPI.switchCreatureModel(props.instance.id, target, modelId);
+    } else {
+      await agentAPI.switchModel(props.instance.id, modelId);
+    }
+    // Backend sends session_info event via WS which updates chat.sessionInfo
   } catch (err) {
     modelSwitchError.value = err.response?.data?.detail || "Failed to switch model";
     selectedModel.value = chat.sessionInfo.model || "";

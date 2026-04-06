@@ -122,39 +122,6 @@
         </div>
       </div>
 
-      <!-- Running tasks -->
-      <div
-        v-if="chat.hasRunningJobs"
-        class="px-4 py-1.5 border-t border-t-warm-100 dark:border-t-warm-800 bg-warm-50/50 dark:bg-warm-800/30"
-      >
-        <div class="flex items-center gap-1.5 text-[10px] text-warm-400 mb-1">
-          <span class="i-carbon-in-progress text-amber" />
-          <span>Running tasks</span>
-        </div>
-        <div class="flex flex-wrap gap-1.5">
-          <div
-            v-for="(job, jobId) in chat.runningJobs"
-            :key="jobId"
-            class="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber/10 text-[11px] font-mono"
-          >
-            <span class="w-1.5 h-1.5 rounded-full bg-amber kohaku-pulse" />
-            <span class="text-amber-shadow dark:text-amber-light">{{
-              job.name
-            }}</span>
-            <span class="text-warm-400">{{
-              chat.getJobElapsed(job)
-            }}</span>
-            <button
-              class="ml-0.5 text-warm-400 hover:text-coral transition-colors"
-              title="Stop task"
-              @click="stopTask(jobId, job.name)"
-            >
-              <span class="i-carbon-close text-[9px]" />
-            </button>
-          </div>
-        </div>
-      </div>
-
       <!-- Input: sits inside bubble, with subtle top border -->
       <div
         class="px-4 pb-4 pt-2 border-t border-t-warm-100 dark:border-t-warm-800"
@@ -292,7 +259,11 @@ async function stopTask(jobId, jobName) {
     } else {
       await agentAPI.stopTask(chat._instanceId, jobId);
     }
-    delete chat.runningJobs[jobId];
+    // Don't eagerly remove from runningJobs — the backend will send a
+    // subagent_done/subagent_error or tool_done/tool_error event which
+    // handles the removal properly. Just mark as cancelling for visual feedback.
+    const job = chat.runningJobs[jobId];
+    if (job) job.cancelling = true;
   } catch (err) {
     console.error("Failed to stop task:", err);
   }

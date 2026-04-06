@@ -47,10 +47,22 @@
           <div
             v-for="c in instance.creatures"
             :key="c.name"
-            class="flex items-center gap-1.5 px-1"
+            class="flex items-center gap-1.5 px-1 cursor-pointer hover:bg-warm-100 dark:hover:bg-warm-800 rounded"
+            @click="chat.openTab(c.name)"
           >
             <StatusDot :status="c.status" />
             <span class="text-warm-600 dark:text-warm-300">{{ c.name }}</span>
+          </div>
+          <!-- Channels -->
+          <div class="mt-1 text-warm-400 text-[10px] uppercase tracking-wider">Channels</div>
+          <div
+            v-for="ch in instance.channels || []"
+            :key="ch.name"
+            class="flex items-center gap-1.5 px-1 cursor-pointer hover:bg-warm-100 dark:hover:bg-warm-800 rounded"
+            @click="chat.openTab('ch:' + ch.name)"
+          >
+            <span class="text-aquamarine font-bold shrink-0">&rarr;</span>
+            <span class="text-warm-600 dark:text-warm-300">{{ ch.name }}</span>
           </div>
         </template>
       </div>
@@ -97,11 +109,19 @@
           <div
             v-for="(job, jobId) in chat.runningJobs"
             :key="jobId"
-            class="flex items-center gap-1.5 px-1.5 py-1 rounded bg-amber/10"
+            class="flex items-center gap-1.5 px-1.5 py-1 rounded bg-amber/10 group"
           >
             <span class="w-1.5 h-1.5 rounded-full bg-amber kohaku-pulse shrink-0" />
             <span class="text-amber-shadow dark:text-amber-light font-mono truncate">{{ job.name }}</span>
+            <span class="flex-1" />
             <span class="text-warm-400 shrink-0">{{ chat.getJobElapsed(job) }}</span>
+            <button
+              class="text-warm-400 hover:text-coral transition-colors opacity-0 group-hover:opacity-100"
+              title="Stop task"
+              @click="editorStopTask(jobId, job.name)"
+            >
+              <span class="i-carbon-close text-[9px]" />
+            </button>
           </div>
         </div>
       </div>
@@ -194,7 +214,7 @@
 import StatusDot from "@/components/common/StatusDot.vue";
 import { useChatStore } from "@/stores/chat";
 import { useEditorStore } from "@/stores/editor";
-import { configAPI, agentAPI } from "@/utils/api";
+import { configAPI, agentAPI, terrariumAPI } from "@/utils/api";
 
 const props = defineProps({
   instance: { type: Object, default: null },
@@ -238,10 +258,30 @@ async function handleModelSwitch(modelName) {
   if (!props.instance?.id) return;
   modelSwitchError.value = "";
   try {
-    await agentAPI.switchModel(props.instance.id, modelName);
+    if (props.instance.type === "terrarium") {
+      const target = chat.activeTab || "root";
+      await terrariumAPI.switchCreatureModel(props.instance.id, target, modelName);
+    } else {
+      await agentAPI.switchModel(props.instance.id, modelName);
+    }
   } catch (err) {
     modelSwitchError.value = err.response?.data?.detail || "Switch failed";
     selectedModel.value = chat.sessionInfo.model || "";
+  }
+}
+
+async function editorStopTask(jobId, jobName) {
+  try {
+    const tab = chat.activeTab;
+    if (chat._instanceType === "terrarium") {
+      await terrariumAPI.stopCreatureTask(chat._instanceId, tab || "root", jobId);
+    } else {
+      await agentAPI.stopTask(chat._instanceId, jobId);
+    }
+    const job = chat.runningJobs[jobId];
+    if (job) job.cancelling = true;
+  } catch (err) {
+    console.error("Failed to stop task:", err);
   }
 }
 
