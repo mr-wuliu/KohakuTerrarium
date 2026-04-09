@@ -256,6 +256,30 @@ export const useLayoutStore = defineStore("layout", () => {
     }
   }
 
+  /** Get the remembered preset id for an instance, or null. */
+  function getInstancePresetId(instanceId) {
+    if (!instanceId) return null;
+    const data =
+      instanceOverrides.value[instanceId] ||
+      _readJson(INSTANCE_OVERRIDE_PREFIX + instanceId, null);
+    return data?.presetId || null;
+  }
+
+  /** Persist the active preset for an instance. */
+  function rememberInstancePreset(instanceId, presetId) {
+    if (!instanceId || !presetId) return;
+    const current =
+      instanceOverrides.value[instanceId] ||
+      _readJson(INSTANCE_OVERRIDE_PREFIX + instanceId, {}) ||
+      {};
+    const next = { ...current, presetId };
+    instanceOverrides.value = {
+      ...instanceOverrides.value,
+      [instanceId]: next,
+    };
+    _writeJson(INSTANCE_OVERRIDE_PREFIX + instanceId, next);
+  }
+
   /** Set a per-instance override patch (merged into active preset). */
   function setInstanceOverride(instanceId, patch) {
     if (!instanceId) return;
@@ -342,6 +366,8 @@ export const useLayoutStore = defineStore("layout", () => {
     resetPresetToDefault,
     deleteUserPreset,
     loadInstanceOverrides,
+    getInstancePresetId,
+    rememberInstancePreset,
     setInstanceOverride,
     clearInstanceOverride,
     markDetached,

@@ -13,12 +13,16 @@
 
 <script setup>
 import NavRail from "@/components/layout/NavRail.vue";
-import { useThemeStore } from "@/stores/theme";
+import { useKeyboardShortcuts } from "@/composables/useKeyboardShortcuts";
 import { useInstancesStore } from "@/stores/instances";
+import { useThemeStore } from "@/stores/theme";
 
 const theme = useThemeStore();
 theme.init();
 
 const instances = useInstancesStore();
 instances.fetchAll();
+
+// Global Ctrl+1..6 preset switcher, Ctrl+Shift+L edit mode, Ctrl+K palette.
+useKeyboardShortcuts();
 </script>

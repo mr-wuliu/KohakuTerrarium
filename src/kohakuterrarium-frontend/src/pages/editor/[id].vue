@@ -83,12 +83,38 @@ const panelProps = computed(() => ({
 }));
 provide("panelProps", panelProps);
 
-onMounted(() => {
-  layout.switchPreset("legacy-editor");
-  loadInstance();
+onMounted(async () => {
+  await loadInstance();
+  applyPreset();
 });
 
-watch(() => route.params.id, loadInstance);
+watch(() => route.params.id, async () => {
+  await loadInstance();
+  applyPreset();
+});
+
+function applyPreset() {
+  const id = route.params.id;
+  if (!id) return;
+  layout.loadInstanceOverrides(id);
+  // Editor route defaults to the Workspace preset; if user previously
+  // switched while on this instance, honor the last choice.
+  const remembered = layout.getInstancePresetId(id);
+  const target =
+    remembered && layout.allPresets[remembered] ? remembered : "workspace";
+  layout.switchPreset(target);
+}
+
+// Persist preset changes (editor route shares the same instance id).
+watch(
+  () => layout.activePresetId,
+  (id) => {
+    const instId = route.params.id;
+    if (id && instId && !id.startsWith("legacy-")) {
+      layout.rememberInstancePreset(instId, id);
+    }
+  },
+);
 
 async function loadInstance() {
   const id = route.params.id;

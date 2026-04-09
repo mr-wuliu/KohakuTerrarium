@@ -22,5 +22,7 @@ export default defineConfig({
     environment: "jsdom",
     globals: false,
     include: ["src/**/*.test.js", "src/**/*.test.ts"],
+    // jsdom is flagged unstable for form elements — suppress the noise.
+    silent: false,
   },
 });

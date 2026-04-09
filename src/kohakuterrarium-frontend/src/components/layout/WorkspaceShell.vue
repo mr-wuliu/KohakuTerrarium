@@ -5,6 +5,10 @@
       <slot name="header" />
     </div>
 
+    <!-- Preset strip: hidden when using a legacy preset so the old routes
+         stay pixel-identical to pre-refactor. -->
+    <PresetStrip v-if="showPresetStrip" class="shrink-0" />
+
     <!-- Main body: horizontal zones (Splitpanes) + optional drawer + status bar -->
     <div class="workspace-shell__body flex-1 min-h-0 flex flex-col">
       <!-- Top section: horizontal zone strip -->
@@ -51,6 +55,24 @@
         class="shrink-0"
       />
     </div>
+
+    <!-- Singleton ChatPanel — mounted exactly once at the shell root
+         and teleported into whichever zone slot currently hosts the
+         `chat` panel. Mounted detached (off-screen) when no slot hosts
+         chat so component-local UI state and keybind listeners survive
+         a switch to a no-chat preset. -->
+    <Teleport
+      :to="chatMountSelector"
+      :disabled="!chatSlotActive"
+      :defer="true"
+    >
+      <div
+        class="h-full w-full"
+        :style="chatSlotActive ? undefined : offscreenStyle"
+      >
+        <ChatPanel v-bind="chatPanelProps" />
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -58,8 +80,10 @@
 import { Pane, Splitpanes } from "splitpanes";
 import "splitpanes/dist/splitpanes.css";
 
-import { computed, onMounted } from "vue";
+import { computed, inject, onMounted } from "vue";
 
+import ChatPanel from "@/components/chat/ChatPanel.vue";
+import PresetStrip from "@/components/chrome/PresetStrip.vue";
 import { useLayoutStore } from "@/stores/layout";
 import ZoneAux from "./ZoneAux.vue";
 import ZoneDrawer from "./ZoneDrawer.vue";
@@ -67,15 +91,40 @@ import ZoneMain from "./ZoneMain.vue";
 import ZoneSidebar from "./ZoneSidebar.vue";
 import ZoneStrip from "./ZoneStrip.vue";
 
+// Mount the singleton off-screen when no slot hosts chat.
+const offscreenStyle = {
+  position: "absolute",
+  left: "-99999px",
+  width: "1px",
+  height: "1px",
+  overflow: "hidden",
+  pointerEvents: "none",
+};
+
 const props = defineProps({
   instanceId: { type: String, default: null },
   /** Enable edit mode placeholders (Phase 5). */
   showEmpty: { type: Boolean, default: false },
   /** Fixed drawer height in px. Drag handle lands in Phase 5. */
   drawerHeight: { type: Number, default: 160 },
+  /** When true, the preset switcher strip is shown at the top. */
+  presetStrip: { type: Boolean, default: true },
 });
 
 const layout = useLayoutStore();
+
+// Runtime panel props injected by the route. We read `chat` from the
+// map for the singleton ChatPanel so page owners can still pass e.g.
+// the current instance without going through the store.
+const panelPropsSource = inject("panelProps", () => ({}), true);
+
+const chatPanelProps = computed(() => {
+  const src =
+    typeof panelPropsSource === "function" ? panelPropsSource() : panelPropsSource;
+  // `src` may itself be a ref-like (pinia computed), so unwrap `.value`.
+  const unwrapped = src && typeof src === "object" && "value" in src ? src.value : src;
+  return unwrapped?.chat || {};
+});
 
 // Canonical horizontal zone order, left to right.
 const HORIZONTAL_ORDER = [
@@ -87,6 +136,13 @@ const HORIZONTAL_ORDER = [
 ];
 
 const preset = computed(() => layout.effectivePreset(props.instanceId));
+
+const showPresetStrip = computed(() => {
+  if (!props.presetStrip) return false;
+  const id = layout.activePresetId || "";
+  // Legacy presets keep the old pixel-identical look.
+  return !id.startsWith("legacy-");
+});
 
 /**
  * Filter horizontal zones to those that are (a) visible in the preset AND
@@ -141,6 +197,24 @@ const statusBarVisible = computed(() => {
   if (!z || z.visible === false) return false;
   const slots = p.slots?.filter((s) => s.zoneId === "status-bar") || [];
   return slots.length > 0 || props.showEmpty;
+});
+
+/** Which zone currently hosts the chat slot (or null). */
+const chatZoneId = computed(() => {
+  const p = preset.value;
+  if (!p) return null;
+  const s = (p.slots || []).find((slot) => slot.panelId === "chat");
+  return s?.zoneId || null;
+});
+
+/** True iff the active preset has a `chat` slot anywhere. */
+const chatSlotActive = computed(() => chatZoneId.value != null);
+
+/** Teleport target selector matching the ZoneSlot placeholder id. The
+ *  selector varies by zone so Vue's Teleport re-queries on every move. */
+const chatMountSelector = computed(() => {
+  const zone = chatZoneId.value || "none";
+  return `#kt-teleport-chat-${props.instanceId || "global"}-${zone}`;
 });
 
 function zoneComponentFor(type) {

@@ -92,12 +92,15 @@ const panelProps = computed(() => ({
 }));
 provide("panelProps", panelProps);
 
-onMounted(() => {
-  layout.switchPreset("legacy-instance");
-  loadInstance();
+onMounted(async () => {
+  await loadInstance();
+  applyPresetForInstance();
 });
 
-watch(() => route.params.id, loadInstance);
+watch(() => route.params.id, async () => {
+  await loadInstance();
+  applyPresetForInstance();
+});
 
 async function loadInstance() {
   const id = route.params.id;
@@ -107,6 +110,36 @@ async function loadInstance() {
     chat.initForInstance(instance.value);
   }
 }
+
+/**
+ * Choose the preset for this instance:
+ *   1. remembered preset (per-instance localStorage)
+ *   2. terrarium → multi-creature; creature → chat-focus
+ */
+function applyPresetForInstance() {
+  const id = route.params.id;
+  if (!id) return;
+  layout.loadInstanceOverrides(id);
+  const remembered = layout.getInstancePresetId(id);
+  if (remembered && layout.allPresets[remembered]) {
+    layout.switchPreset(remembered);
+    return;
+  }
+  const fallback =
+    instance.value?.type === "terrarium" ? "multi-creature" : "chat-focus";
+  layout.switchPreset(fallback);
+}
+
+// Persist preset changes against this instance id.
+watch(
+  () => layout.activePresetId,
+  (id) => {
+    const instId = route.params.id;
+    if (id && instId && !id.startsWith("legacy-")) {
+      layout.rememberInstancePreset(instId, id);
+    }
+  },
+);
 
 function handleOpenTab(tabKey) {
   chat.openTab(tabKey);

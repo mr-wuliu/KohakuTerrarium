@@ -175,6 +175,30 @@ describe("layout store — per-instance overrides", () => {
   });
 });
 
+describe("layout store — per-instance preset persistence", () => {
+  it("remembers and retrieves the active preset per instance", () => {
+    const store = useLayoutStore();
+    store.registerBuiltinPreset(makeBuiltinPreset("a"));
+    store.registerBuiltinPreset(makeBuiltinPreset("b"));
+    store.switchPreset("a");
+    store.rememberInstancePreset("inst-1", "a");
+    expect(store.getInstancePresetId("inst-1")).toBe("a");
+    // Fresh pinia reads from localStorage.
+    setActivePinia(createPinia());
+    const store2 = useLayoutStore();
+    expect(store2.getInstancePresetId("inst-1")).toBe("a");
+  });
+
+  it("updates the persisted preset when rememberInstancePreset is called again", () => {
+    const store = useLayoutStore();
+    store.registerBuiltinPreset(makeBuiltinPreset("a"));
+    store.registerBuiltinPreset(makeBuiltinPreset("b"));
+    store.rememberInstancePreset("inst-1", "a");
+    store.rememberInstancePreset("inst-1", "b");
+    expect(store.getInstancePresetId("inst-1")).toBe("b");
+  });
+});
+
 describe("layout store — detached panels", () => {
   it("tracks detached panels without duplicates", () => {
     const store = useLayoutStore();
