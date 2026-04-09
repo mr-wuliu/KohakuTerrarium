@@ -1,31 +1,53 @@
 <template>
-  <div class="zone-slot h-full w-full overflow-hidden">
-    <!-- Teleport target for panels that the shell owns singleton-style
-         (currently just `chat`). The shell watches for this element and
-         teleports its persistent `<ChatPanel>` here, preserving scroll
-         position and draft text across preset switches. -->
-    <div
-      v-if="isTeleportTarget"
-      :id="teleportId"
-      class="h-full w-full"
+  <div class="zone-slot h-full w-full flex flex-col overflow-hidden">
+    <!-- Edit-mode header overlay: kebab menu + orientation warning -->
+    <PanelHeader
+      v-if="layout.editMode && panel"
+      :panel-id="slotInfo.panelId"
+      :zone-id="slotInfo.zoneId"
+      @replace="onReplace"
+      @close="onClose"
     />
-    <component
-      :is="panel.component"
-      v-else-if="panel && panel.component"
-      v-bind="resolvedProps"
-    />
-    <div
-      v-else
-      class="h-full w-full flex items-center justify-center text-[11px] text-warm-400"
-    >
-      no such panel: {{ slotInfo.panelId }}
+
+    <div class="flex-1 min-h-0">
+      <!-- Teleport target for panels that the shell owns singleton-style
+           (currently just `chat`). The shell watches for this element and
+           teleports its persistent `<ChatPanel>` here, preserving scroll
+           position and draft text across preset switches. -->
+      <div
+        v-if="isTeleportTarget"
+        :id="teleportId"
+        class="h-full w-full"
+      />
+      <component
+        :is="panel.component"
+        v-else-if="panel && panel.component"
+        v-bind="resolvedProps"
+      />
+      <div
+        v-else
+        class="h-full w-full flex items-center justify-center text-[11px] text-warm-400"
+      >
+        no such panel: {{ slotInfo.panelId }}
+      </div>
     </div>
+
+    <!-- Panel picker modal (edit mode replace action) -->
+    <PanelPicker
+      v-if="layout.editMode"
+      v-model="pickerOpen"
+      :zone-id="slotInfo.zoneId"
+      :current-panel-id="slotInfo.panelId"
+      @select="onPick"
+    />
   </div>
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 
+import PanelHeader from "./PanelHeader.vue";
+import PanelPicker from "./PanelPicker.vue";
 import { useLayoutStore } from "@/stores/layout";
 
 /**
@@ -41,6 +63,24 @@ const props = defineProps({
 });
 
 const layout = useLayoutStore();
+const pickerOpen = ref(false);
+
+function onReplace() {
+  pickerOpen.value = true;
+}
+
+function onPick(newPanelId) {
+  layout.replaceSlotPanel(
+    props.slotInfo.zoneId,
+    props.slotInfo.panelId,
+    newPanelId,
+  );
+  pickerOpen.value = false;
+}
+
+function onClose() {
+  layout.removeSlot(props.slotInfo.zoneId, props.slotInfo.panelId);
+}
 
 const panel = computed(() => layout.getPanel(props.slotInfo.panelId));
 

@@ -199,6 +199,74 @@ describe("layout store — per-instance preset persistence", () => {
   });
 });
 
+describe("layout store — edit mode", () => {
+  function setupWithActive() {
+    const store = useLayoutStore();
+    store.registerBuiltinPreset(makeBuiltinPreset());
+    store.switchPreset("legacy-instance");
+    return store;
+  }
+
+  it("enter/exit edit mode toggles state and snapshots the preset", () => {
+    const store = setupWithActive();
+    expect(store.editMode).toBe(false);
+    store.enterEditMode();
+    expect(store.editMode).toBe(true);
+    expect(store.editModeSnapshot?.id).toBe("legacy-instance");
+    store.exitEditMode();
+    expect(store.editMode).toBe(false);
+    expect(store.editModeSnapshot).toBeNull();
+  });
+
+  it("replaceSlotPanel mutates the active preset and flips dirty", () => {
+    const store = setupWithActive();
+    store.enterEditMode();
+    store.replaceSlotPanel("main", "chat", "status-dashboard");
+    const slots = store.activePreset.slots;
+    expect(slots.find((s) => s.zoneId === "main").panelId).toBe(
+      "status-dashboard",
+    );
+    expect(store.editModeDirty).toBe(true);
+  });
+
+  it("removeSlot drops the target slot", () => {
+    const store = setupWithActive();
+    store.enterEditMode();
+    store.removeSlot("right-sidebar", "status-dashboard");
+    expect(
+      store.activePreset.slots.filter((s) => s.zoneId === "right-sidebar"),
+    ).toHaveLength(0);
+    expect(store.editModeDirty).toBe(true);
+  });
+
+  it("addSlotToZone appends and makes zone visible", () => {
+    const store = setupWithActive();
+    store.enterEditMode();
+    // Left sidebar is hidden in makeBuiltinPreset; addSlotToZone should
+    // make it visible and add the slot.
+    store.addSlotToZone("left-sidebar", "chat");
+    expect(store.activePreset.zones["left-sidebar"].visible).toBe(true);
+    expect(
+      store.activePreset.slots.find((s) => s.zoneId === "left-sidebar")
+        ?.panelId,
+    ).toBe("chat");
+  });
+
+  it("revertEditMode restores the snapshot", () => {
+    const store = setupWithActive();
+    store.enterEditMode();
+    store.replaceSlotPanel("main", "chat", "status-dashboard");
+    expect(store.activePreset.slots.find((s) => s.zoneId === "main").panelId).toBe(
+      "status-dashboard",
+    );
+    store.revertEditMode();
+    expect(store.activePreset.slots.find((s) => s.zoneId === "main").panelId).toBe(
+      "chat",
+    );
+    expect(store.editModeDirty).toBe(false);
+  });
+});
+
 describe("layout store — detached panels", () => {
   it("tracks detached panels without duplicates", () => {
     const store = useLayoutStore();

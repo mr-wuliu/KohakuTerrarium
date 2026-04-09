@@ -5,9 +5,16 @@
       <slot name="header" />
     </div>
 
+    <!-- Edit-mode banner (appears only when layout.editMode is true) -->
+    <EditModeBanner />
+
     <!-- Preset strip: hidden when using a legacy preset so the old routes
          stay pixel-identical to pre-refactor. -->
     <PresetStrip v-if="showPresetStrip" class="shrink-0" />
+
+    <!-- Save-as-new-preset modal — opened by the strip's "+" or the
+         edit-mode banner's "Save as new" button via layoutEvents. -->
+    <SavePresetModal v-model="saveModalOpen" @saved="onSaved" />
 
     <!-- Main body: horizontal zones (Splitpanes) + optional drawer + status bar -->
     <div class="workspace-shell__body flex-1 min-h-0 flex flex-col">
@@ -80,11 +87,14 @@
 import { Pane, Splitpanes } from "splitpanes";
 import "splitpanes/dist/splitpanes.css";
 
-import { computed, inject, onMounted } from "vue";
+import { computed, inject, onMounted, onUnmounted, ref } from "vue";
 
 import ChatPanel from "@/components/chat/ChatPanel.vue";
 import PresetStrip from "@/components/chrome/PresetStrip.vue";
 import { useLayoutStore } from "@/stores/layout";
+import { LAYOUT_EVENTS, onLayoutEvent } from "@/utils/layoutEvents";
+import EditModeBanner from "./EditModeBanner.vue";
+import SavePresetModal from "./SavePresetModal.vue";
 import ZoneAux from "./ZoneAux.vue";
 import ZoneDrawer from "./ZoneDrawer.vue";
 import ZoneMain from "./ZoneMain.vue";
@@ -245,10 +255,28 @@ function onHorizontalResize(sizes) {
   }
 }
 
+// Save-as-new modal open state. Triggered by the preset strip's "+"
+// button and the edit-mode banner's "Save as new" button via events.
+const saveModalOpen = ref(false);
+let unsubSaveAs = () => {};
+
+function onSaved() {
+  // After saving a preset the store already switched to it. Exit edit
+  // mode if we were in one.
+  if (layout.editMode) layout.exitEditMode();
+}
+
 onMounted(() => {
   if (props.instanceId) {
     layout.loadInstanceOverrides(props.instanceId);
   }
+  unsubSaveAs = onLayoutEvent(LAYOUT_EVENTS.SAVE_AS_REQUESTED, () => {
+    saveModalOpen.value = true;
+  });
+});
+
+onUnmounted(() => {
+  unsubSaveAs();
 });
 </script>
 

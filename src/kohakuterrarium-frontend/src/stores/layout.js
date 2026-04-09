@@ -85,6 +85,16 @@ export const useLayoutStore = defineStore("layout", () => {
   /** @type {import('vue').Ref<Array<{panelId: string, instanceId: string}>>} */
   const detachedPanels = ref([]);
 
+  // ── edit mode state ────────────────────────────────────────────
+  /** Edit mode toggle. When true, panels show headers with a kebab
+   *  menu and splitters are thick and editable. */
+  const editMode = ref(false);
+  /** Pristine snapshot of the preset taken when edit mode opens —
+   *  used to revert on cancel. Null when not in edit mode. */
+  const editModeSnapshot = ref(null);
+  /** True if changes have been made since entering edit mode. */
+  const editModeDirty = ref(false);
+
   // ---------- getters ----------
 
   const allPresets = computed(() => ({
@@ -325,6 +335,124 @@ export const useLayoutStore = defineStore("layout", () => {
     }
   }
 
+  // ── edit mode actions ──────────────────────────────────────────
+
+  function enterEditMode() {
+    if (editMode.value) return;
+    const p = activePreset.value;
+    if (!p) return;
+    editModeSnapshot.value = _clone(p);
+    editMode.value = true;
+    editModeDirty.value = false;
+  }
+
+  function exitEditMode() {
+    editMode.value = false;
+    editModeSnapshot.value = null;
+    editModeDirty.value = false;
+  }
+
+  /** Discard edit mode changes and restore the preset as it was. */
+  function revertEditMode() {
+    const snap = editModeSnapshot.value;
+    if (!snap) return;
+    if (snap.builtin) {
+      builtinPresets.value = {
+        ...builtinPresets.value,
+        [snap.id]: _clone(snap),
+      };
+      // Clear any instance override that might have been applied.
+      resetPresetToDefault(snap.id);
+    } else {
+      userPresets.value = {
+        ...userPresets.value,
+        [snap.id]: _clone(snap),
+      };
+      _writeJson(USER_PRESETS_KEY, userPresets.value);
+    }
+    editModeDirty.value = false;
+  }
+
+  /** Commit the current in-memory preset to persistent storage. If
+   *  the active preset is builtin, changes are saved to a global
+   *  override so the next load re-applies them. */
+  function saveEditMode() {
+    const p = activePreset.value;
+    if (!p) return;
+    if (p.builtin) {
+      // Persist as a global override patch on the builtin.
+      _writeJson(INSTANCE_OVERRIDE_PREFIX + "__global", {
+        ...(_readJson(INSTANCE_OVERRIDE_PREFIX + "__global", {}) || {}),
+        ["preset:" + p.id]: _clone(p),
+      });
+    } else {
+      userPresets.value = {
+        ...userPresets.value,
+        [p.id]: _clone(p),
+      };
+      _writeJson(USER_PRESETS_KEY, userPresets.value);
+    }
+    editModeDirty.value = false;
+  }
+
+  /** Replace the panel at a given slot coordinate. */
+  function replaceSlotPanel(zoneId, oldPanelId, newPanelId) {
+    const p = activePreset.value;
+    if (!p) return;
+    const nextSlots = p.slots.map((s) => {
+      if (s.zoneId === zoneId && s.panelId === oldPanelId) {
+        return { ...s, panelId: newPanelId };
+      }
+      return s;
+    });
+    _mutateActivePreset({ slots: nextSlots });
+    editModeDirty.value = true;
+  }
+
+  /** Remove a slot entirely. */
+  function removeSlot(zoneId, panelId) {
+    const p = activePreset.value;
+    if (!p) return;
+    const nextSlots = p.slots.filter(
+      (s) => !(s.zoneId === zoneId && s.panelId === panelId),
+    );
+    _mutateActivePreset({ slots: nextSlots });
+    editModeDirty.value = true;
+  }
+
+  /** Append a new slot to a zone. */
+  function addSlotToZone(zoneId, panelId) {
+    const p = activePreset.value;
+    if (!p) return;
+    const nextSlots = [...p.slots, { zoneId, panelId }];
+    // Also make the zone visible if it wasn't.
+    const nextZones = {
+      ...p.zones,
+      [zoneId]: { ...(p.zones[zoneId] || {}), visible: true },
+    };
+    _mutateActivePreset({ slots: nextSlots, zones: nextZones });
+    editModeDirty.value = true;
+  }
+
+  /** Internal: mutate the active preset in place (either builtin or
+   *  user). Changes are kept in memory until saveEditMode(). */
+  function _mutateActivePreset(patch) {
+    const p = activePreset.value;
+    if (!p) return;
+    const next = { ...p, ...patch };
+    if (p.builtin) {
+      builtinPresets.value = {
+        ...builtinPresets.value,
+        [p.id]: next,
+      };
+    } else {
+      userPresets.value = {
+        ...userPresets.value,
+        [p.id]: next,
+      };
+    }
+  }
+
   /** Attach a detached-window descriptor (Phase 11 will consume this). */
   function markDetached(panelId, instanceId) {
     const entry = { panelId, instanceId };
@@ -348,6 +476,9 @@ export const useLayoutStore = defineStore("layout", () => {
     panels,
     instanceOverrides,
     detachedPanels,
+    editMode,
+    editModeSnapshot,
+    editModeDirty,
     // getters
     allPresets,
     activePreset,
@@ -372,5 +503,13 @@ export const useLayoutStore = defineStore("layout", () => {
     clearInstanceOverride,
     markDetached,
     unmarkDetached,
+    // edit mode
+    enterEditMode,
+    exitEditMode,
+    revertEditMode,
+    saveEditMode,
+    replaceSlotPanel,
+    removeSlot,
+    addSlotToZone,
   };
 });
