@@ -11,7 +11,6 @@ import ChatPanel from "@/components/chat/ChatPanel.vue";
 import EditorMain from "@/components/editor/EditorMain.vue";
 import EditorStatus from "@/components/editor/EditorStatus.vue";
 import FileTree from "@/components/editor/FileTree.vue";
-import ActivityPanel from "@/components/panels/ActivityPanel.vue";
 import CanvasPanel from "@/components/panels/CanvasPanel.vue";
 import CreaturesPanel from "@/components/panels/CreaturesPanel.vue";
 import DebugPanel from "@/components/panels/DebugPanel.vue";
@@ -38,14 +37,15 @@ function vsplit(ratio, top, bottom) {
 
 // ─── Presets ─────────────────────────────────────────────────────
 
-/** Chat focus — default for single-creature instances. */
+/** Chat focus — default for single-creature instances.
+ *  chat | status-dashboard(large, top) + state(small, bottom) */
 const CHAT_FOCUS_PRESET = {
   id: "chat-focus",
   label: "Chat Focus",
   shortcut: "Ctrl+1",
-  tree: hsplit(72,
+  tree: hsplit(70,
     leaf("chat"),
-    vsplit(50, leaf("activity"), leaf("state")),
+    vsplit(65, leaf("status-dashboard"), leaf("state")),
   ),
 };
 
@@ -77,14 +77,14 @@ const MULTI_CREATURE_PRESET = {
   ),
 };
 
-/** Canvas — artifact-forward. */
+/** Canvas — chat on left, canvas + activity on right. */
 const CANVAS_PRESET = {
   id: "canvas",
   label: "Canvas",
   shortcut: "Ctrl+4",
-  tree: hsplit(65,
-    leaf("canvas"),
-    vsplit(65, leaf("chat"), leaf("activity")),
+  tree: hsplit(45,
+    leaf("chat"),
+    vsplit(70, leaf("canvas"), leaf("activity")),
   ),
 };
 
@@ -146,9 +146,10 @@ export function registerBuiltinPanels() {
   layout.registerPanel({ id: "status-dashboard", label: "Status", component: StatusDashboard });
   layout.registerPanel({ id: "file-tree", label: "File Tree", component: FileTree });
   layout.registerPanel({ id: "monaco-editor", label: "Editor", component: EditorMain });
-  layout.registerPanel({ id: "editor-status", label: "Editor Status", component: EditorStatus });
+  // Legacy alias — legacy-editor preset references this id.
+  layout.registerPanel({ id: "editor-status", label: "Activity", component: EditorStatus });
   layout.registerPanel({ id: "files", label: "Files", component: FilesPanel });
-  layout.registerPanel({ id: "activity", label: "Activity", component: ActivityPanel });
+  layout.registerPanel({ id: "activity", label: "Activity", component: EditorStatus });
   layout.registerPanel({ id: "state", label: "State", component: StatePanel });
   layout.registerPanel({ id: "creatures", label: "Creatures", component: CreaturesPanel });
   layout.registerPanel({ id: "canvas", label: "Canvas", component: CanvasPanel });
