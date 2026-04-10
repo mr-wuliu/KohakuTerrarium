@@ -95,8 +95,18 @@
                 </el-button>
               </template>
             </el-input>
-            <div class="text-[9px] text-warm-400">
-              Full-text keyword search (FTS5)
+            <div class="flex items-center gap-1">
+              <button
+                v-for="m in ['auto', 'fts', 'semantic', 'hybrid']"
+                :key="m"
+                class="px-2 py-0.5 rounded text-[10px] transition-colors"
+                :class="memMode === m
+                  ? 'bg-iolite/10 text-iolite'
+                  : 'text-warm-400 hover:text-warm-600'"
+                @click="memMode = m"
+              >
+                {{ m }}
+              </button>
             </div>
             <div
               v-if="memLoading"
@@ -344,8 +354,20 @@ watch(agentId, (id) => {
   if (id) scratchpad.fetch(id);
 }, { immediate: true });
 
-// Auto-refetch scratchpad when tool calls complete (tools are what
-// modify the scratchpad). Watch the message count as a trigger.
+// Auto-refetch scratchpad when processing stops (tool calls that
+// modify scratchpad happen during processing). Also refetch when
+// runningJobs count changes (tool completions).
+watch(
+  () => [chat.processing, Object.keys(chat.runningJobs).length],
+  ([processing, _jobCount], [prevProcessing]) => {
+    // Refetch when processing ends (agent finished a turn) or
+    // when a job completes (job count decreased).
+    if ((!processing && prevProcessing) || agentId.value) {
+      scratchpad.fetch(agentId.value);
+    }
+  },
+);
+// Also refetch on new messages arriving.
 watch(
   () => {
     const tab = chat.activeTab;

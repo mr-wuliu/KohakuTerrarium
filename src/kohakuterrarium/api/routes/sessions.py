@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from kohakuterrarium.api.deps import get_manager
+from kohakuterrarium.session.embedding import create_embedder
 from kohakuterrarium.session.memory import SessionMemory
 from kohakuterrarium.session.resume import (
     detect_session_type,
@@ -270,81 +271,62 @@ async def search_session_memory(
         raise HTTPException(404, f"Session not found: {session_name}")
 
     try:
-        # For running instances, use the live SessionStore from the manager
-        # so we read fresh data (including unflushed WAL cache). For saved
-        # sessions, open a read-only store from the file.
+        # Find the live agent session (if running) to reuse its store
+        # and embedder — same pattern as the search_memory builtin tool.
         manager = get_manager()
+        live_agent = None
         live_store = None
-        for sid, session in manager._agents.items():
-            if hasattr(session, "agent") and hasattr(session.agent, "session_store"):
-                ss = session.agent.session_store
-                if ss and str(path) in str(getattr(ss, "_path", "")):
+        for _sid, session in manager._agents.items():
+            ag = getattr(session, "agent", None)
+            if ag and hasattr(ag, "session_store") and ag.session_store:
+                ss = ag.session_store
+                if str(path) in str(getattr(ss, "_path", "")):
+                    live_agent = ag
                     live_store = ss
                     break
 
         if live_store:
-            # Running instance — use the live store's built-in FTS directly.
-            # The store indexes text in FTS as events arrive (append_event).
-            live_store.flush()
-            raw_results = live_store.search(q, k=k)
-            results = [
-                {
-                    "content": r.get("meta", {}).get("event_key", ""),
-                    "round": 0,
-                    "block": 0,
-                    "agent": r.get("meta", {}).get("agent", ""),
-                    "block_type": r.get("meta", {}).get("type", ""),
-                    "score": r.get("score", 0),
-                    "ts": 0,
-                    "tool_name": "",
-                    "channel": "",
-                }
-                for r in raw_results
-            ]
-            # Enrich: fetch the actual text for each result
-            for res in results:
-                event_key = res["content"]
-                if event_key:
-                    try:
-                        evt = live_store.events[event_key]
-                        res["content"] = (
-                            evt.get("content")
-                            or evt.get("output")
-                            or evt.get("text")
-                            or str(evt)[:500]
-                        )
-                        res["ts"] = evt.get("ts", 0)
-                        res["block_type"] = evt.get("type", res["block_type"])
-                    except (KeyError, Exception):
-                        pass
+            store = live_store
+            store.flush()
         else:
-            # Saved session — open store, use SessionMemory with indexing.
             store = SessionStore(path)
-            meta = store.load_meta()
-            agents_list = meta.get("agents", [])
 
-            memory = SessionMemory(str(path))
-            for agent_name in agents_list:
-                events = store.get_events(agent_name)
-                if events:
-                    memory.index_events(agent_name, events)
+        # Load embedder config from session state or agent config
+        # (mirrors builtins/tools/search_memory.py _load_embed_config)
+        embed_config: dict[str, Any] | None = None
+        try:
+            saved = store.state.get("embedding_config")
+            if isinstance(saved, dict):
+                embed_config = saved
+        except (KeyError, Exception):
+            pass
+        if embed_config is None and live_agent and hasattr(live_agent, "config"):
+            memory_cfg = getattr(live_agent.config, "memory", None)
+            if isinstance(memory_cfg, dict) and "embedding" in memory_cfg:
+                embed_config = memory_cfg["embedding"]
+        if embed_config is None:
+            embed_config = {"provider": "auto"}
+
+        try:
+            embedder = create_embedder(embed_config)
+        except Exception:
+            embedder = None
+
+        memory = SessionMemory(
+            str(path), embedder=embedder, store=store
+        )
+
+        # Index unindexed events (idempotent — skips already indexed)
+        meta = store.load_meta()
+        for agent_name in meta.get("agents", []):
+            events = store.get_events(agent_name)
+            if events:
+                memory.index_events(agent_name, events)
+
+        results = memory.search(query=q, mode=mode, k=k, agent=agent)
+
+        if not live_store:
             store.close(update_status=False)
-
-            mem_results = memory.search(query=q, mode=mode, k=k, agent=agent)
-            results = [
-                {
-                    "content": r.content,
-                    "round": r.round_num,
-                    "block": r.block_num,
-                    "agent": r.agent,
-                    "block_type": r.block_type,
-                    "score": r.score,
-                    "ts": r.ts,
-                    "tool_name": r.tool_name,
-                    "channel": r.channel,
-                }
-                for r in mem_results
-            ]
     except Exception as e:
         raise HTTPException(500, f"Memory search failed: {e}")
 
@@ -354,5 +336,18 @@ async def search_session_memory(
         "mode": mode,
         "k": k,
         "count": len(results),
-        "results": results,
+        "results": [
+            {
+                "content": r.content,
+                "round": r.round_num,
+                "block": r.block_num,
+                "agent": r.agent,
+                "block_type": r.block_type,
+                "score": r.score,
+                "ts": r.ts,
+                "tool_name": r.tool_name,
+                "channel": r.channel,
+            }
+            for r in results
+        ],
     }
