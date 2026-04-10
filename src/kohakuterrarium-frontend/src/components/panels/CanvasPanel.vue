@@ -17,7 +17,7 @@
         :class="canvas.activeId === a.id
           ? 'bg-iolite/15 text-iolite'
           : 'text-warm-500 hover:text-warm-700 dark:hover:text-warm-300 hover:bg-warm-100 dark:hover:bg-warm-800'"
-        :title="`${a.name} · ${a.type} · v${a.versions.length}`"
+        :title="`${a.name} · ${a.type}`"
         @click="canvas.setActive(a.id)"
       >
         <span :class="typeIcon(a.type)" class="text-[11px]" />
@@ -27,7 +27,7 @@
       <div class="flex-1" />
 
       <!-- Copy + Download buttons (only when an artifact is active) -->
-      <template v-if="canvas.activeVersion">
+      <template v-if="canvas.activeArtifact">
         <button
           class="w-6 h-6 flex items-center justify-center rounded text-warm-400 hover:text-warm-600 dark:hover:text-warm-300 transition-colors shrink-0"
           title="Copy to clipboard"
@@ -63,21 +63,21 @@
 
       <CodeViewer
         v-else-if="viewerType === 'code' || viewerType === 'svg' || viewerType === 'diagram'"
-        :content="canvas.activeVersion.content"
-        :lang="canvas.activeVersion.lang"
+        :content="canvas.activeArtifact.content"
+        :lang="canvas.activeArtifact.lang"
       />
       <MarkdownViewer
         v-else-if="viewerType === 'markdown'"
-        :content="canvas.activeVersion.content"
+        :content="canvas.activeArtifact.content"
       />
       <HtmlViewer
         v-else-if="viewerType === 'html'"
-        :content="canvas.activeVersion.content"
+        :content="canvas.activeArtifact.content"
       />
       <CodeViewer
         v-else
-        :content="canvas.activeVersion.content"
-        :lang="canvas.activeVersion.lang"
+        :content="canvas.activeArtifact.content"
+        :lang="canvas.activeArtifact.lang"
       />
     </div>
 
@@ -86,7 +86,7 @@
       v-if="canvas.activeArtifact"
       class="flex items-center gap-2 px-2 h-6 border-t border-warm-200 dark:border-warm-700 text-[10px] text-warm-500 shrink-0"
     >
-      <span class="font-mono">{{ canvas.activeVersion?.lang || 'text' }}</span>
+      <span class="font-mono">{{ canvas.activeArtifact?.lang || 'text' }}</span>
       <span class="opacity-50">·</span>
       <span>{{ lineCount }} lines</span>
     </div>
@@ -105,7 +105,7 @@ const canvas = useCanvasStore();
 
 const viewerType = computed(() => canvas.activeArtifact?.type || "code");
 const lineCount = computed(() => {
-  const c = canvas.activeVersion?.content;
+  const c = canvas.activeArtifact?.content;
   return c ? c.split("\n").length : 0;
 });
 
@@ -121,14 +121,14 @@ function typeIcon(t) {
 }
 
 function copyContent() {
-  const text = canvas.activeVersion?.content;
+  const text = canvas.activeArtifact?.content;
   if (!text) return;
   navigator.clipboard?.writeText(text).catch(() => {});
 }
 
 function downloadContent() {
   const art = canvas.activeArtifact;
-  const ver = canvas.activeVersion;
+  const ver = canvas.activeArtifact;
   if (!art || !ver) return;
   const ext = {
     code: ver.lang || "txt",

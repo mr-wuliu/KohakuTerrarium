@@ -1,5 +1,5 @@
 /**
- * Canvas store — artifact list + versions derived from the chat
+ * Canvas store — artifact list derived from the chat
  * stream. Frontend-only: no backend endpoint.
  *
  * Phase 7 scope: detect long code / markdown / html chunks in
@@ -45,26 +45,19 @@ function _artifactName(seed) {
 }
 
 export const useCanvasStore = defineStore("canvas", () => {
-  /** @type {import('vue').Ref<Array<{id: string, name: string, type: string, versions: Array<{content: string, lang: string, ts: string}>, sourceId: string}>>} */
+  /** @type {import('vue').Ref<Array<{id: string, name: string, type: string, content: string, lang: string, sourceId: string}>>} */
   const artifacts = ref([]);
   const activeId = ref(/** @type {string | null} */ (null));
   /** Per-session dismissal: once the user closes canvas, don't auto-open. */
   const dismissed = ref(false);
 
-  /** Upsert an artifact. If sourceId matches and content is the same
-   *  as the latest version, skip (idempotent). Only appends a version
-   *  if the content actually changed. */
+  /** Upsert an artifact. Skips if sourceId exists with same content. */
   function upsertArtifact({ sourceId, content, lang, type, seedName }) {
     const existing = artifacts.value.find((a) => a.sourceId === sourceId);
     if (existing) {
-      const latest = existing.versions[existing.versions.length - 1];
-      // Skip if content unchanged (repeated scans of the same block).
-      if (latest && latest.content === content) return existing;
-      existing.versions.push({
-        content,
-        lang: lang || "text",
-        ts: new Date().toISOString(),
-      });
+      if (existing.content === content) return existing;
+      existing.content = content;
+      existing.lang = lang || existing.lang;
       if (!activeId.value) activeId.value = existing.id;
       return existing;
     }
@@ -74,7 +67,8 @@ export const useCanvasStore = defineStore("canvas", () => {
       sourceId,
       name: _artifactName(seedName || content),
       type: type || _guessTypeFromLang(lang),
-      versions: [version],
+      content,
+      lang: lang || "text",
     };
     artifacts.value = [...artifacts.value, a];
     if (!activeId.value) activeId.value = id;
@@ -164,11 +158,8 @@ export const useCanvasStore = defineStore("canvas", () => {
     () => artifacts.value.find((a) => a.id === activeId.value) || null,
   );
 
-  const activeVersion = computed(() => {
-    const a = activeArtifact.value;
-    if (!a) return null;
-    return a.versions[a.versions.length - 1] || null;
-  });
+  // activeVersion kept as alias for backward compat — just returns the artifact itself.
+  const activeVersion = computed(() => activeArtifact.value);
 
   return {
     artifacts,

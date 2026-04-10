@@ -13,15 +13,16 @@ describe("canvas store — artifact detection", () => {
     const msg = {
       id: "m1",
       role: "assistant",
-      content:
+      parts: [{ type: "text", content:
         "Here is the file:\n##canvas name=hello lang=py##\nprint('hi')\n##canvas##\nDone.",
+      }],
     };
     store.scanMessage(msg);
     expect(store.artifacts).toHaveLength(1);
     const a = store.artifacts[0];
     expect(a.type).toBe("code");
-    expect(a.versions[0].lang).toBe("py");
-    expect(a.versions[0].content).toContain("print('hi')");
+    expect(a.lang).toBe("py");
+    expect(a.content).toContain("print('hi')");
   });
 
   it("detects long fenced code blocks as artifacts", () => {
@@ -30,11 +31,11 @@ describe("canvas store — artifact detection", () => {
     const msg = {
       id: "m2",
       role: "assistant",
-      content: "See below:\n```python\n" + body + "\n```\n",
+      parts: [{ type: "text", content: "See below:\n```python\n" + body + "\n```\n" }],
     };
     store.scanMessage(msg);
     expect(store.artifacts).toHaveLength(1);
-    expect(store.artifacts[0].versions[0].lang).toBe("python");
+    expect(store.artifacts[0].lang).toBe("python");
   });
 
   it("ignores short fenced code blocks", () => {
@@ -42,27 +43,25 @@ describe("canvas store — artifact detection", () => {
     const msg = {
       id: "m3",
       role: "assistant",
-      content: "Here:\n```js\nlet x = 1;\n```",
+      parts: [{ type: "text", content: "Here:\n```js\nlet x = 1;\n```" }],
     };
     store.scanMessage(msg);
     expect(store.artifacts).toHaveLength(0);
   });
 
-  it("versions a second emission against the same source", () => {
+  it("updates content on re-scan with changed content", () => {
     const store = useCanvasStore();
-    store.upsertArtifact({
-      sourceId: "abc",
-      content: "v1 body",
-      lang: "js",
-    });
-    store.upsertArtifact({
-      sourceId: "abc",
-      content: "v2 body",
-      lang: "js",
-    });
+    store.upsertArtifact({ sourceId: "abc", content: "v1 body", lang: "js" });
+    store.upsertArtifact({ sourceId: "abc", content: "v2 body", lang: "js" });
     expect(store.artifacts).toHaveLength(1);
-    expect(store.artifacts[0].versions).toHaveLength(2);
-    expect(store.artifacts[0].versions[1].content).toBe("v2 body");
+    expect(store.artifacts[0].content).toBe("v2 body");
+  });
+
+  it("skips upsert when content is identical", () => {
+    const store = useCanvasStore();
+    store.upsertArtifact({ sourceId: "abc", content: "same", lang: "js" });
+    store.upsertArtifact({ sourceId: "abc", content: "same", lang: "js" });
+    expect(store.artifacts).toHaveLength(1);
   });
 
   it("skips non-assistant messages", () => {
