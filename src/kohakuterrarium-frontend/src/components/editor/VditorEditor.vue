@@ -7,6 +7,8 @@ import { onMounted, onUnmounted, ref, watch } from "vue";
 import Vditor from "vditor";
 import "vditor/dist/index.css";
 
+import { useThemeStore } from "@/stores/theme";
+
 const props = defineProps({
   content: { type: String, default: "" },
   filePath: { type: String, default: "" },
@@ -14,6 +16,7 @@ const props = defineProps({
 
 const emit = defineEmits(["change", "save"]);
 
+const theme = useThemeStore();
 const editorEl = ref(null);
 let vd = null;
 let suppressChange = false;
@@ -35,9 +38,9 @@ onMounted(() => {
       "edit-mode", "outline", "fullscreen",
     ],
     cache: { enable: false },
-    theme: document.documentElement.classList.contains("dark") ? "dark" : "classic",
+    theme: theme.dark ? "dark" : "classic",
     preview: {
-      theme: { current: document.documentElement.classList.contains("dark") ? "dark" : "light" },
+      theme: { current: theme.dark ? "dark" : "light" },
       hljs: { lineNumber: true },
       math: { engine: "KaTeX" },
     },
@@ -77,12 +80,12 @@ watch(
   },
 );
 
-// Watch dark mode changes.
+// React to theme toggle.
 watch(
-  () => document.documentElement.classList.contains("dark"),
+  () => theme.dark,
   (dark) => {
     if (vd) {
-      vd.setTheme(dark ? "dark" : "classic");
+      vd.setTheme(dark ? "dark" : "classic", dark ? "dark" : "light");
     }
   },
 );
@@ -101,6 +104,7 @@ onUnmounted(() => {
   border: none !important;
   border-radius: 0 !important;
   font-size: 13px !important;
+  max-width: 100% !important;
 }
 .vditor-ir pre.vditor-reset,
 .vditor-sv pre.vditor-reset,
@@ -108,6 +112,8 @@ onUnmounted(() => {
   font-size: 13px !important;
   line-height: 1.5 !important;
   padding: 8px 16px !important;
+  word-wrap: break-word !important;
+  overflow-wrap: break-word !important;
 }
 .vditor-ir pre.vditor-reset h1 { font-size: 1.4em !important; }
 .vditor-ir pre.vditor-reset h2 { font-size: 1.25em !important; }
@@ -118,26 +124,5 @@ onUnmounted(() => {
 }
 .vditor-toolbar__item {
   padding: 2px 3px !important;
-}
-/* Prevent content from overflowing the container */
-.vditor-ir pre.vditor-reset,
-.vditor-sv pre.vditor-reset,
-.vditor-wysiwyg pre.vditor-reset {
-  overflow-x: hidden !important;
-  word-wrap: break-word !important;
-  overflow-wrap: break-word !important;
-}
-.vditor-ir pre.vditor-reset a,
-.vditor-ir pre.vditor-reset .vditor-ir__marker--link {
-  word-break: break-all !important;
-  max-width: 100% !important;
-  display: inline-block !important;
-}
-.vditor {
-  max-width: 100% !important;
-  overflow: hidden !important;
-}
-.vditor-content {
-  overflow-x: hidden !important;
 }
 </style>

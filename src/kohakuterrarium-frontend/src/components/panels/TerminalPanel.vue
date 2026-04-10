@@ -1,7 +1,7 @@
 <template>
-  <div class="h-full w-full flex flex-col bg-black overflow-hidden">
+  <div class="h-full w-full flex flex-col overflow-hidden" :class="themeStore.dark ? 'bg-[#1a1a2e]' : 'bg-[#f7f5f2]'">
     <!-- Header -->
-    <div class="flex items-center gap-2 px-2 h-6 bg-warm-900 border-b border-warm-800 text-[10px] text-warm-400 shrink-0">
+    <div class="flex items-center gap-2 px-2 h-6 border-b text-[10px] shrink-0" :class="themeStore.dark ? 'bg-warm-900 border-warm-800 text-warm-400' : 'bg-warm-100 border-warm-200 text-warm-500'">
       <span class="i-carbon-terminal text-[11px]" />
       <span>Terminal</span>
       <span
@@ -30,12 +30,28 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "xterm/css/xterm.css";
 
 import { useInstancesStore } from "@/stores/instances";
+import { useThemeStore } from "@/stores/theme";
 
 const props = defineProps({
   instance: { type: Object, default: null },
 });
 
 const instances = useInstancesStore();
+const themeStore = useThemeStore();
+
+const DARK_THEME = {
+  background: "#1a1a2e",
+  foreground: "#e0e0e0",
+  cursor: "#e0e0e0",
+  selectionBackground: "#44475a",
+};
+
+const LIGHT_THEME = {
+  background: "#f7f5f2",
+  foreground: "#3a3632",
+  cursor: "#3a3632",
+  selectionBackground: "#c8c4be",
+};
 const termEl = ref(null);
 const connected = ref(false);
 
@@ -105,12 +121,7 @@ onMounted(async () => {
     cursorBlink: true,
     fontSize: 13,
     fontFamily: "'Consolas NF', 'CaskaydiaCove NF', 'CaskaydiaCove Nerd Font', 'JetBrainsMono NF', 'FiraCode NF', 'Hack NF', 'JetBrains Mono', 'Fira Code', Consolas, monospace",
-    theme: {
-      background: "#1a1a2e",
-      foreground: "#e0e0e0",
-      cursor: "#e0e0e0",
-      selectionBackground: "#44475a",
-    },
+    theme: themeStore.dark ? DARK_THEME : LIGHT_THEME,
   });
 
   fitAddon = new FitAddon();
@@ -151,6 +162,16 @@ onMounted(async () => {
   // Auto-connect if we have an agent.
   if (agentId.value) connect();
 });
+
+// React to theme toggle.
+watch(
+  () => themeStore.dark,
+  (dark) => {
+    if (term) {
+      term.options.theme = dark ? DARK_THEME : LIGHT_THEME;
+    }
+  },
+);
 
 watch(agentId, (id, prev) => {
   if (prev) disconnect();
